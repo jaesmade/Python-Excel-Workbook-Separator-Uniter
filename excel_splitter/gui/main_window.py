@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
-from excel_splitter.core import WorkbookProcessingError, build_group_map, split_workbooks
+from excel_splitter.core import WorkbookProcessingError, _select_excel_engine, build_group_map, split_workbooks
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -141,9 +141,10 @@ class ExcelSplitterApp(ctk.CTk):
         self.update_idletasks()
 
         try:
-            workbook = pd.ExcelFile(file_path)
+            engine = _select_excel_engine(file_path)
+            workbook = pd.ExcelFile(file_path, engine=engine)
             sheet_names = workbook.sheet_names
-            self.workbook = {name: pd.read_excel(file_path, sheet_name=name) for name in sheet_names}
+            self.workbook = {name: pd.read_excel(file_path, sheet_name=name, engine=engine) for name in sheet_names}
             self.selected_sheet_name = None
             self.headers = []
             self.groups = {}
@@ -229,7 +230,7 @@ class ExcelSplitterApp(ctk.CTk):
             for (department, status), rows in groups.items():
                 label = f"{department} - {status}"
                 count = len(rows)
-                cb = ctk.CTkCheckBox(self.groups_frame, text=f"{label}     {count} records", onvalue=True, offvalue=False, justify="left")
+                cb = ctk.CTkCheckBox(self.groups_frame, text=f"{label}     {count} records", onvalue=True, offvalue=False)
                 cb.select()
                 cb.grid(sticky="w", padx=16, pady=6)
                 self.group_checkboxes[(department, status)] = cb

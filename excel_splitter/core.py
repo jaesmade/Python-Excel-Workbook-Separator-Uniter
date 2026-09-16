@@ -15,6 +15,15 @@ class WorkbookProcessingError(ValueError):
     pass
 
 
+def _select_excel_engine(file_path: str) -> str | None:
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension == ".xls":
+        return "xlrd"
+    if extension in {".xlsx", ".xlsm"}:
+        return "openpyxl"
+    return None
+
+
 def _ensure_python_value(value):
     if pd.isna(value):
         return None
@@ -42,7 +51,8 @@ def _first_row_headers(sheet) -> list[str]:
 
 
 def read_workbook_sheet(file_path: str, sheet_name: str):
-    data = pd.read_excel(file_path, sheet_name=sheet_name)
+    engine = _select_excel_engine(file_path)
+    data = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
     headers = _first_row_headers(data)
     if not headers or all((header == "" for header in headers)):
         raise WorkbookProcessingError("The selected worksheet does not contain any data.")
@@ -113,7 +123,8 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     total_files = len(file_paths)
 
     for file_index, file_path in enumerate(file_paths, start=1):
-        source_df = pd.read_excel(file_path, sheet_name=sheet_name)
+        engine = _select_excel_engine(file_path)
+        source_df = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
         headers, groups = build_group_map(source_df, department_column, id_number_column)
         if combined_headers is None:
             combined_headers = headers
