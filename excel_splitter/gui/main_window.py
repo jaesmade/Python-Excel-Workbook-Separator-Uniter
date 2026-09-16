@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import threading
+from collections import OrderedDict
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -56,12 +59,6 @@ class ExcelSplitterApp(ctk.CTk):
         self.id_dropdown = ctk.CTkOptionMenu(top, values=[], variable=self.id_var, command=self.on_column_selection_changed)
         self.id_dropdown.grid(row=3, column=1, columnspan=2, padx=(0, 16), pady=(8, 8), sticky="ew")
 
-        ctk.CTkLabel(top, text="Output File", font=ctk.CTkFont(size=13, weight="bold")).grid(row=4, column=0, padx=(16, 12), pady=(8, 16), sticky="w")
-        self.output_var = ctk.StringVar(value="Separated_Workbook.xlsx")
-        self.output_entry = ctk.CTkEntry(top, textvariable=self.output_var, fg_color="#1f1f1f")
-        self.output_entry.grid(row=4, column=1, padx=(0, 10), pady=(8, 16), sticky="ew")
-        ctk.CTkButton(top, text="Browse", command=self.choose_output_location, width=110).grid(row=4, column=2, padx=(0, 16), pady=(8, 16))
-
         self.combine_duplicates_var = ctk.BooleanVar(value=True)
         self.combine_duplicates_checkbox = ctk.CTkCheckBox(
             top,
@@ -70,7 +67,7 @@ class ExcelSplitterApp(ctk.CTk):
             onvalue=True,
             offvalue=False,
         )
-        self.combine_duplicates_checkbox.grid(row=5, column=0, columnspan=3, padx=(16, 16), pady=(0, 12), sticky="w")
+        self.combine_duplicates_checkbox.grid(row=4, column=0, columnspan=3, padx=(16, 16), pady=(8, 12), sticky="w")
 
         body = ctk.CTkFrame(self, corner_radius=12)
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
@@ -106,34 +103,26 @@ class ExcelSplitterApp(ctk.CTk):
         self.file_path = self.file_paths[0]
         if len(self.file_paths) == 1:
             self.file_var.set(self.file_path)
-            self._set_default_output_name(self.file_path)
         else:
             names = ", ".join(os.path.basename(path) for path in self.file_paths[:3])
             if len(self.file_paths) > 3:
                 names += f", +{len(self.file_paths) - 3} more"
             self.file_var.set(f"{len(self.file_paths)} files selected: {names}")
-            self._set_default_output_name(self.file_paths[0])
         self.load_workbook(self.file_path)
 
     def choose_output_location(self):
+        source_file = self.file_paths[0] if self.file_paths else ""
+        source_stem = os.path.splitext(os.path.basename(source_file))[0]
+        initial_name = f"{source_stem} - SPLIT.xlsx" if source_stem else "Separated_Workbook.xlsx"
         path = filedialog.asksaveasfilename(
             title="Save separated workbook as",
             defaultextension=".xlsx",
-            initialfile=self.output_var.get() or "Separated_Workbook.xlsx",
+            initialfile=initial_name,
             filetypes=[("Excel Workbook", "*.xlsx")],
         )
         if path:
-            self.output_var.set(path)
-
-    def _set_default_output_name(self, source_file: str):
-        if not source_file:
-            self.output_var.set("Separated_Workbook.xlsx")
-            return
-        stem = os.path.splitext(os.path.basename(source_file))[0]
-        if not stem:
-            self.output_var.set("Separated_Workbook.xlsx")
-            return
-        self.output_var.set(f"{stem} - SPLIT.xlsx")
+            return path
+        return None
 
     def load_workbook(self, file_path):
         self.progress_var.set("Loading workbook...")
@@ -220,7 +209,20 @@ class ExcelSplitterApp(ctk.CTk):
                 ctk.CTkLabel(self.groups_frame, text="Please select both required columns.", anchor="w").grid(sticky="ew", padx=16, pady=8)
                 return
 
-            headers, groups = build_group_map(sheet, dep_name, id_name)
+            if len(self.file_paths) == 1:
+                headers, groups = build_group_map(sheet, dep_name, id_name)
+            else:
+                groups = OrderedDict()
+                for file_path in self.file_paths:
+                    engine = _select_excel_engine(file_path)
+                    source_sheet = pd.read_excel(
+                        file_path,
+                        sheet_name=self.selected_sheet_name,
+                        engine=engine,
+                    )
+                    _, source_groups = build_group_map(source_sheet, dep_name, id_name)
+                    for group_key, rows in source_groups.items():
+                        groups.setdefault(group_key, []).extend(rows)
             self.groups = groups
             if not groups:
                 ctk.CTkLabel(self.groups_frame, text="No groups detected.", anchor="w").grid(sticky="ew", padx=16, pady=8)
@@ -256,24 +258,20 @@ class ExcelSplitterApp(ctk.CTk):
             messagebox.showerror("No groups selected", "Please choose at least one group to generate.")
             return
 
-        output_path = self.output_var.get().strip()
-        if not output_path:
-            messagebox.showerror("Missing output file", "Please enter or choose an output file name.")
-            return
-
         self.generate_btn.configure(state="disabled")
         self.progress_var.set("Processing...")
         self.progress_bar.set(0)
         self.update_idletasks()
 
-        thread = threading.Thread(target=self._generate_workbook, args=(output_path, selected_groups), daemon=True)
+        thread = threading.Thread(target=self._generate_workbook, args=(selected_groups,), daemon=True)
         thread.start()
 
-    def _generate_workbook(self, output_path, selected_groups):
+    def _generate_workbook(self, selected_groups):
+        temporary_path = None
         try:
-            directory = os.path.dirname(os.path.abspath(output_path))
-            if not os.path.isdir(directory):
-                raise WorkbookProcessingError("The selected output directory does not exist.")
+            temporary_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+            temporary_path = temporary_file.name
+            temporary_file.close()
 
             def progress_update(percent, message):
                 self.progress_var.set(message)
@@ -285,7 +283,7 @@ class ExcelSplitterApp(ctk.CTk):
                 self.selected_sheet_name,
                 self.department_var.get(),
                 self.id_var.get(),
-                output_path,
+                temporary_path,
                 selected_groups,
                 progress_callback=progress_update,
                 combine_duplicates=self.combine_duplicates_var.get(),
@@ -293,6 +291,22 @@ class ExcelSplitterApp(ctk.CTk):
 
             created = result.get("created_sheets", 0)
             processed = result.get("processed_rows", 0)
+            self.after(0, self._save_completed_workbook, temporary_path, created, processed)
+            temporary_path = None
+        except Exception as exc:
+            if temporary_path and os.path.exists(temporary_path):
+                os.remove(temporary_path)
+            self.after(0, self._generation_failed, exc)
+
+    def _save_completed_workbook(self, temporary_path, created, processed):
+        try:
+            output_path = self.choose_output_location()
+            if not output_path:
+                self.progress_var.set("Workbook generated but not saved.")
+                self.progress_bar.set(0)
+                return
+
+            shutil.copyfile(temporary_path, output_path)
             message = (
                 "Workbook successfully created!\n\n"
                 f"{created} worksheets created\n"
@@ -303,11 +317,17 @@ class ExcelSplitterApp(ctk.CTk):
             self.progress_var.set("Completed successfully.")
             self.progress_bar.set(1)
         except Exception as exc:
-            messagebox.showerror("Unable to process the workbook", f"Unable to process the workbook.\n\nReason:\n{exc}")
-            self.progress_var.set("Processing failed.")
-            self.progress_bar.set(0)
+            self._generation_failed(exc)
         finally:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
             self.generate_btn.configure(state="normal")
+
+    def _generation_failed(self, exc):
+        messagebox.showerror("Unable to process the workbook", f"Unable to process the workbook.\n\nReason:\n{exc}")
+        self.progress_var.set("Processing failed.")
+        self.progress_bar.set(0)
+        self.generate_btn.configure(state="normal")
 
 
 def main():

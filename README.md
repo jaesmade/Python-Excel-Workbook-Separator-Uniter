@@ -11,7 +11,7 @@ This application lets you select an Excel workbook, choose a worksheet, map the 
 - Uncheck groups you do not want to generate
 - Sanitize sheet names for Excel restrictions
 - Preserve source rows and headers in each generated sheet
-- Save the output workbook to a chosen folder
+- Generate the workbook first, then choose the output location in a Save As dialog
 
 ## Install dependencies
 
@@ -23,6 +23,7 @@ python -m pip install -r requirements.txt
 
 ```bash
 python main.py
+C:/Python314/python.exe main.py
 ```
 
 ## Packaging into a Windows .exe
