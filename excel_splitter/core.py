@@ -179,7 +179,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
             if progress_callback:
                 progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
-        workbook.save(output_file)
+            workbook.save(output_file)
         return {
             "created_sheets": len(selected_groups),
             "processed_rows": processed_rows,
@@ -212,7 +212,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
         if progress_callback:
             progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
-    output_wb.save(output_file)
+        output_wb.save(output_file)
     return {
         "created_sheets": len(output_wb.worksheets),
         "processed_rows": processed_rows,
