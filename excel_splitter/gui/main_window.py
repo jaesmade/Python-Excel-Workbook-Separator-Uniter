@@ -62,6 +62,16 @@ class ExcelSplitterApp(ctk.CTk):
         self.output_entry.grid(row=4, column=1, padx=(0, 10), pady=(8, 16), sticky="ew")
         ctk.CTkButton(top, text="Browse", command=self.choose_output_location, width=110).grid(row=4, column=2, padx=(0, 16), pady=(8, 16))
 
+        self.combine_duplicates_var = ctk.BooleanVar(value=True)
+        self.combine_duplicates_checkbox = ctk.CTkCheckBox(
+            top,
+            text="Combine duplicate groups",
+            variable=self.combine_duplicates_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.combine_duplicates_checkbox.grid(row=5, column=0, columnspan=3, padx=(16, 16), pady=(0, 12), sticky="w")
+
         body = ctk.CTkFrame(self, corner_radius=12)
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
@@ -277,6 +287,7 @@ class ExcelSplitterApp(ctk.CTk):
                 output_path,
                 selected_groups,
                 progress_callback=progress_update,
+                combine_duplicates=self.combine_duplicates_var.get(),
             )
 
             created = result.get("created_sheets", 0)

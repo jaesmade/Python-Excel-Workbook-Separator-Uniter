@@ -95,13 +95,16 @@ def build_group_map(sheet, department_column: str, id_number_column: str):
 
 def split_workbook(file_path: str, sheet_name: str, department_column: str, id_number_column: str,
                    output_file: str, selected_groups: set[tuple[str, str]] | None = None,
-                   progress_callback: Callable[[int, str], None] | None = None):
-    return split_workbooks([file_path], sheet_name, department_column, id_number_column, output_file, selected_groups, progress_callback)
+                   progress_callback: Callable[[int, str], None] | None = None,
+                   combine_duplicates: bool = True):
+    return split_workbooks([file_path], sheet_name, department_column, id_number_column, output_file,
+                           selected_groups, progress_callback, combine_duplicates)
 
 
 def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str,
                     output_file: str, selected_groups: set[tuple[str, str]] | None = None,
-                    progress_callback: Callable[[int, str], None] | None = None):
+                    progress_callback: Callable[[int, str], None] | None = None,
+                    combine_duplicates: bool = True):
     if not file_paths:
         raise WorkbookProcessingError("No files were selected for processing.")
 
@@ -116,9 +119,15 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
             combined_headers = headers
 
         for group_key, rows in groups.items():
-            if group_key not in combined_groups:
-                combined_groups[group_key] = []
-            combined_groups[group_key].extend(rows)
+            if combine_duplicates:
+                if group_key not in combined_groups:
+                    combined_groups[group_key] = []
+                combined_groups[group_key].extend(rows)
+            else:
+                unique_key = (group_key[0], group_key[1], os.path.basename(file_path))
+                if unique_key not in combined_groups:
+                    combined_groups[unique_key] = []
+                combined_groups[unique_key].extend(rows)
 
         if progress_callback:
             progress_callback(int((file_index / total_files) * 40), f"Reading: {os.path.basename(file_path)}")
