@@ -96,10 +96,38 @@ def build_group_map(sheet, department_column: str, id_number_column: str):
 def split_workbook(file_path: str, sheet_name: str, department_column: str, id_number_column: str,
                    output_file: str, selected_groups: set[tuple[str, str]] | None = None,
                    progress_callback: Callable[[int, str], None] | None = None):
-    source_df = pd.read_excel(file_path, sheet_name=sheet_name)
-    headers, groups = build_group_map(source_df, department_column, id_number_column)
-    if not selected_groups:
-        selected_groups = set(groups.keys())
+    return split_workbooks([file_path], sheet_name, department_column, id_number_column, output_file, selected_groups, progress_callback)
+
+
+def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str,
+                    output_file: str, selected_groups: set[tuple[str, str]] | None = None,
+                    progress_callback: Callable[[int, str], None] | None = None):
+    if not file_paths:
+        raise WorkbookProcessingError("No files were selected for processing.")
+
+    combined_groups: OrderedDict[tuple[str, str], list[tuple]] = OrderedDict()
+    combined_headers: list[str] | None = None
+    total_files = len(file_paths)
+
+    for file_index, file_path in enumerate(file_paths, start=1):
+        source_df = pd.read_excel(file_path, sheet_name=sheet_name)
+        headers, groups = build_group_map(source_df, department_column, id_number_column)
+        if combined_headers is None:
+            combined_headers = headers
+
+        for group_key, rows in groups.items():
+            if group_key not in combined_groups:
+                combined_groups[group_key] = []
+            combined_groups[group_key].extend(rows)
+
+        if progress_callback:
+            progress_callback(int((file_index / total_files) * 40), f"Reading: {os.path.basename(file_path)}")
+
+    if not combined_groups:
+        raise WorkbookProcessingError("No valid rows were found across the selected files.")
+
+    if selected_groups is None:
+        selected_groups = set(combined_groups.keys())
 
     if not selected_groups:
         raise WorkbookProcessingError("No groups were selected to generate worksheets.")
@@ -107,18 +135,18 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
     output_ext = os.path.splitext(output_file)[1].lower()
     used_names: set[str] = set()
     processed_rows = 0
-    total_groups = len(groups)
+    total_groups = len(combined_groups)
 
     if output_ext == ".xls":
         workbook = xlwt.Workbook()
-        for index, (group_key, rows) in enumerate(groups.items(), start=1):
+        for index, (group_key, rows) in enumerate(combined_groups.items(), start=1):
             if group_key not in selected_groups:
                 continue
 
             display_name = f"{group_key[0]} - {group_key[1]}"
             sheet_title = sanitize_sheet_name(display_name, used_names)
             sheet = workbook.add_sheet(sheet_title[:31])
-            for col_num, header in enumerate(headers):
+            for col_num, header in enumerate(combined_headers or []):
                 sheet.write(0, col_num, header)
             for row_num, row_values in enumerate(rows, start=1):
                 for col_num, value in enumerate(row_values):
@@ -129,7 +157,7 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
                 processed_rows += 1
 
             if progress_callback:
-                progress_callback(int((index / total_groups) * 100), f"Creating: {display_name}")
+                progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
         workbook.save(output_file)
         return {
@@ -142,7 +170,7 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
     default_sheet = output_wb.active
     output_wb.remove(default_sheet)
 
-    for index, (group_key, rows) in enumerate(groups.items(), start=1):
+    for index, (group_key, rows) in enumerate(combined_groups.items(), start=1):
         if group_key not in selected_groups:
             continue
 
@@ -150,7 +178,7 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
         sheet_title = sanitize_sheet_name(display_name, used_names)
         target_sheet = output_wb.create_sheet(title=sheet_title)
 
-        for col_num, header in enumerate(headers, start=1):
+        for col_num, header in enumerate(combined_headers or [], start=1):
             target_sheet.cell(row=1, column=col_num, value=header)
 
         for row_num, row_values in enumerate(rows, start=2):
@@ -162,7 +190,7 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
             processed_rows += 1
 
         if progress_callback:
-            progress_callback(int((index / total_groups) * 100), f"Creating: {display_name}")
+            progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
     output_wb.save(output_file)
     return {

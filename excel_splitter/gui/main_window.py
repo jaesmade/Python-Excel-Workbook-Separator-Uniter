@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
-from excel_splitter.core import WorkbookProcessingError, build_group_map, split_workbook
+from excel_splitter.core import WorkbookProcessingError, build_group_map, split_workbooks
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -18,6 +18,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.minsize(860, 680)
 
         self.file_path = None
+        self.file_paths = []
         self.workbook = None
         self.selected_sheet_name = None
         self.headers = []
@@ -87,14 +88,22 @@ class ExcelSplitterApp(ctk.CTk):
 
     def browse_file(self):
         filetypes = [("Excel files", "*.xlsx *.xlsm *.xls")]
-        selected = filedialog.askopenfilename(title="Select Excel workbook", filetypes=filetypes)
+        selected = filedialog.askopenfilenames(title="Select Excel workbooks", filetypes=filetypes)
         if not selected:
             return
 
-        self.file_path = selected
-        self.file_var.set(selected)
-        self._set_default_output_name(selected)
-        self.load_workbook(selected)
+        self.file_paths = list(selected)
+        self.file_path = self.file_paths[0]
+        if len(self.file_paths) == 1:
+            self.file_var.set(self.file_path)
+            self._set_default_output_name(self.file_path)
+        else:
+            names = ", ".join(os.path.basename(path) for path in self.file_paths[:3])
+            if len(self.file_paths) > 3:
+                names += f", +{len(self.file_paths) - 3} more"
+            self.file_var.set(f"{len(self.file_paths)} files selected: {names}")
+            self._set_default_output_name(self.file_paths[0])
+        self.load_workbook(self.file_path)
 
     def choose_output_location(self):
         path = filedialog.asksaveasfilename(
@@ -218,8 +227,8 @@ class ExcelSplitterApp(ctk.CTk):
             ctk.CTkLabel(self.groups_frame, text=f"Unable to detect groups: {exc}", anchor="w").grid(sticky="ew", padx=16, pady=8)
 
     def start_generation(self):
-        if not self.file_path:
-            messagebox.showerror("Missing file", "Please select an Excel file first.")
+        if not self.file_paths:
+            messagebox.showerror("Missing file", "Please select at least one Excel file first.")
             return
         if not self.selected_sheet_name:
             messagebox.showerror("Missing worksheet", "Please select a worksheet to process.")
@@ -260,8 +269,8 @@ class ExcelSplitterApp(ctk.CTk):
                 self.progress_bar.set(percent / 100)
                 self.update_idletasks()
 
-            result = split_workbook(
-                self.file_path,
+            result = split_workbooks(
+                self.file_paths,
                 self.selected_sheet_name,
                 self.department_var.get(),
                 self.id_var.get(),
