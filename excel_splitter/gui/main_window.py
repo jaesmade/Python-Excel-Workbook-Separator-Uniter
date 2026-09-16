@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import os
 import threading
-import traceback
-from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
-from openpyxl import load_workbook
+import pandas as pd
 
 from excel_splitter.core import WorkbookProcessingError, build_group_map, split_workbook
 
@@ -124,17 +122,19 @@ class ExcelSplitterApp(ctk.CTk):
         self.update_idletasks()
 
         try:
-            workbook = load_workbook(file_path, read_only=False, data_only=False)
-            self.workbook = workbook
+            workbook = pd.ExcelFile(file_path)
+            sheet_names = workbook.sheet_names
+            self.workbook = {name: pd.read_excel(file_path, sheet_name=name) for name in sheet_names}
             self.selected_sheet_name = None
             self.headers = []
             self.groups = {}
-            self.sheet_dropdown.configure(values=workbook.sheetnames)
-            self.sheet_var.set(workbook.sheetnames[0] if workbook.sheetnames else "")
+            self.sheet_dropdown.configure(values=sheet_names)
+            self.sheet_var.set(sheet_names[0] if sheet_names else "")
             self.department_var.set("")
             self.id_var.set("")
             self._clear_group_list()
-            self.on_sheet_selected(workbook.sheetnames[0])
+            if sheet_names:
+                self.on_sheet_selected(sheet_names[0])
             self.progress_var.set("Workbook loaded successfully.")
         except Exception as exc:
             messagebox.showerror("Unable to load workbook", f"{exc}")
@@ -150,11 +150,10 @@ class ExcelSplitterApp(ctk.CTk):
         self.selected_sheet_name = sheet_name
         try:
             sheet = self.workbook[sheet_name]
-            rows = list(sheet.iter_rows(values_only=True))
-            if not rows or all(not str(cell).strip() if cell is not None else True for cell in rows[0]):
+            if sheet.empty:
                 raise WorkbookProcessingError("The selected worksheet does not contain any data.")
 
-            headers = list(rows[0])
+            headers = list(sheet.columns)
             self.headers = ["" if value is None else str(value).strip() for value in headers]
             self.department_dropdown.configure(values=self.headers)
             self.id_dropdown.configure(values=self.headers)

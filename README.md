@@ -4,7 +4,7 @@ This application lets you select an Excel workbook, choose a worksheet, map the 
 
 ## Features
 
-- Browse for an Excel workbook
+- Browse for an Excel workbook (.xlsx, .xlsm, .xls)
 - View available worksheets
 - Detect and select the Department and ID Number columns dynamically
 - Preview all detected Department + ID Number groups
