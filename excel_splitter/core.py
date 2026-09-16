@@ -59,26 +59,35 @@ def read_workbook_sheet(file_path: str, sheet_name: str):
     return data, data, headers
 
 
-def build_group_map(sheet, department_column: str, id_number_column: str):
+def build_group_map(
+    sheet,
+    department_column: str,
+    id_number_column: str | None = None,
+    grouping_columns: list[str] | None = None,
+):
     headers = _first_row_headers(sheet)
     if not headers:
         raise WorkbookProcessingError("The selected worksheet does not contain any data.")
 
+    if grouping_columns is None:
+        grouping_columns = [department_column]
+        if id_number_column:
+            grouping_columns.append(id_number_column)
+    grouping_columns = [str(column).strip() for column in grouping_columns if str(column).strip()]
+    if not grouping_columns:
+        raise WorkbookProcessingError("At least one grouping column must be selected.")
+
     if isinstance(sheet, pd.DataFrame):
         columns = [str(col).strip() for col in list(sheet.columns)]
-        if department_column not in columns:
-            raise WorkbookProcessingError(f"The Department column '{department_column}' was not found in the worksheet headers.")
-        if id_number_column not in columns:
-            raise WorkbookProcessingError(f"The ID Number column '{id_number_column}' was not found in the worksheet headers.")
-        department_index = columns.index(department_column)
-        id_index = columns.index(id_number_column)
+        missing = [column for column in grouping_columns if column not in columns]
+        if missing:
+            raise WorkbookProcessingError(f"Grouping column(s) not found in the worksheet headers: {', '.join(missing)}")
+        grouping_indexes = [columns.index(column) for column in grouping_columns]
     else:
-        if department_column not in headers:
-            raise WorkbookProcessingError(f"The Department column '{department_column}' was not found in the worksheet headers.")
-        if id_number_column not in headers:
-            raise WorkbookProcessingError(f"The ID Number column '{id_number_column}' was not found in the worksheet headers.")
-        department_index = headers.index(department_column)
-        id_index = headers.index(id_number_column)
+        missing = [column for column in grouping_columns if column not in headers]
+        if missing:
+            raise WorkbookProcessingError(f"Grouping column(s) not found in the worksheet headers: {', '.join(missing)}")
+        grouping_indexes = [headers.index(column) for column in grouping_columns]
 
     groups = OrderedDict()
 
@@ -86,12 +95,13 @@ def build_group_map(sheet, department_column: str, id_number_column: str):
         if not row or all((cell is None or pd.isna(cell) or str(cell).strip() == "") for cell in row):
             continue
 
-        department_value = row[department_index] if department_index < len(row) else None
-        status_value = row[id_index] if id_index < len(row) else None
-
-        department_name = normalize_group_value(_ensure_python_value(department_value), "UNKNOWN DEPARTMENT")
-        status_name = normalize_group_value(_ensure_python_value(status_value), "UNKNOWN STATUS")
-        group_key = (department_name, status_name)
+        group_key = tuple(
+            normalize_group_value(
+                _ensure_python_value(row[index]) if index < len(row) else None,
+                "UNKNOWN GROUP",
+            )
+            for index in grouping_indexes
+        )
 
         if group_key not in groups:
             groups[group_key] = []
@@ -103,18 +113,20 @@ def build_group_map(sheet, department_column: str, id_number_column: str):
     return headers, groups
 
 
-def split_workbook(file_path: str, sheet_name: str, department_column: str, id_number_column: str,
+def split_workbook(file_path: str, sheet_name: str, department_column: str, id_number_column: str | None,
                    output_file: str, selected_groups: set[tuple[str, str]] | None = None,
                    progress_callback: Callable[[int, str], None] | None = None,
-                   combine_duplicates: bool = True):
+           combine_duplicates: bool = True,
+           grouping_columns: list[str] | None = None):
     return split_workbooks([file_path], sheet_name, department_column, id_number_column, output_file,
-                           selected_groups, progress_callback, combine_duplicates)
+               selected_groups, progress_callback, combine_duplicates, grouping_columns)
 
 
-def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str,
+def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str | None,
                     output_file: str, selected_groups: set[tuple[str, str]] | None = None,
                     progress_callback: Callable[[int, str], None] | None = None,
-                    combine_duplicates: bool = True):
+                    combine_duplicates: bool = True,
+                    grouping_columns: list[str] | None = None):
     if not file_paths:
         raise WorkbookProcessingError("No files were selected for processing.")
 
@@ -125,7 +137,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     for file_index, file_path in enumerate(file_paths, start=1):
         engine = _select_excel_engine(file_path)
         source_df = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
-        headers, groups = build_group_map(source_df, department_column, id_number_column)
+        headers, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
         if combined_headers is None:
             combined_headers = headers
 
@@ -163,7 +175,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
             if group_key not in selected_groups:
                 continue
 
-            display_name = f"{group_key[0]} - {group_key[1]}"
+            display_name = " - ".join(group_key)
             sheet_title = sanitize_sheet_name(display_name, used_names)
             sheet = workbook.add_sheet(sheet_title[:31])
             for col_num, header in enumerate(combined_headers or []):
@@ -194,7 +206,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
         if group_key not in selected_groups:
             continue
 
-        display_name = f"{group_key[0]} - {group_key[1]}"
+        display_name = " - ".join(group_key)
         sheet_title = sanitize_sheet_name(display_name, used_names)
         target_sheet = output_wb.create_sheet(title=sheet_title)
 

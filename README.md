@@ -1,13 +1,13 @@
 # Excel Department & Employment Status Splitter
 
-This application lets you select an Excel workbook, choose a worksheet, map the Department and ID Number / Employment Status columns, review detected groups, and generate a new workbook with one worksheet per Department + ID Number combination.
+This application lets you select an Excel workbook, choose a worksheet, select one or more grouping columns, review detected groups, and generate a new workbook with one worksheet per unique grouping combination.
 
 ## Features
 
 - Browse for an Excel workbook (.xlsx, .xlsm, .xls)
 - View available worksheets
-- Detect and select the Department and ID Number columns dynamically
-- Preview all detected Department + ID Number groups
+- Select one grouping column by default and add more grouping columns as needed
+- Preview all detected groups for the selected column combination
 - Uncheck groups you do not want to generate
 - Sanitize sheet names for Excel restrictions
 - Preserve source rows and headers in each generated sheet
@@ -44,15 +44,14 @@ The executable will be generated in the `dist` folder.
 
 ## Grouping logic
 
-The app reads each row in the selected worksheet and creates a grouping key using:
+The app reads each row in the selected worksheet and creates a grouping key using the selected columns:
 
 ```text
-(department_value, id_number_value)
+(value_from_column_1, value_from_column_2, ...)
 ```
 
-If a Department or ID Number value is empty, it is replaced with:
+If a selected grouping value is empty, it is replaced with:
 
-- `UNKNOWN DEPARTMENT`
-- `UNKNOWN STATUS`
+- `UNKNOWN GROUP`
 
-Each unique combination becomes a separate worksheet with the original headers and matching records.
+Each unique combination becomes a separate worksheet with the original headers and matching records. Leaving only the default grouping column selected creates one sheet per value in that column.

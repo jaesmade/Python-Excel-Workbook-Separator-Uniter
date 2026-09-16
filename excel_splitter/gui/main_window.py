@@ -29,6 +29,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.headers = []
         self.groups = {}
         self.group_checkboxes = {}
+        self.group_column_controls = []
 
         self._build_ui()
 
@@ -91,41 +92,22 @@ class ExcelSplitterApp(ctk.CTk):
         )
         self.sheet_dropdown.grid(row=1, column=1, columnspan=2, padx=(0, 18), pady=(8, 10), sticky="ew")
 
-        ctk.CTkLabel(top, text="Department Column", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=(18, 12), pady=(8, 10), sticky="w")
-        self.department_var = ctk.StringVar(value="")
-        self.department_dropdown = ctk.CTkOptionMenu(
+        ctk.CTkLabel(top, text="Grouping Columns", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=(18, 12), pady=(8, 10), sticky="nw")
+        self.group_columns_frame = ctk.CTkFrame(top, fg_color="transparent")
+        self.group_columns_frame.grid(row=2, column=1, padx=(0, 10), pady=(4, 6), sticky="ew")
+        self.group_columns_frame.grid_columnconfigure(0, weight=1)
+        self.add_column_button = ctk.CTkButton(
             top,
-            values=[],
-            variable=self.department_var,
-            command=self.on_column_selection_changed,
-            fg_color=ivory_alt,
-            button_color=teal,
-            button_hover_color=teal_dark,
-            text_color=text,
-            dropdown_fg_color="#FFFFFF",
-            dropdown_text_color=text,
-            dropdown_hover_color=ivory_alt,
-            height=38,
+            text="+ Add column",
+            command=self._add_group_column,
+            width=110,
+            height=34,
+            fg_color=teal,
+            hover_color=teal_dark,
+            text_color=ivory,
         )
-        self.department_dropdown.grid(row=2, column=1, columnspan=2, padx=(0, 18), pady=(8, 10), sticky="ew")
-
-        ctk.CTkLabel(top, text="ID Number / Status Column", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=3, column=0, padx=(18, 12), pady=(8, 10), sticky="w")
-        self.id_var = ctk.StringVar(value="")
-        self.id_dropdown = ctk.CTkOptionMenu(
-            top,
-            values=[],
-            variable=self.id_var,
-            command=self.on_column_selection_changed,
-            fg_color=ivory_alt,
-            button_color=teal,
-            button_hover_color=teal_dark,
-            text_color=text,
-            dropdown_fg_color="#FFFFFF",
-            dropdown_text_color=text,
-            dropdown_hover_color=ivory_alt,
-            height=38,
-        )
-        self.id_dropdown.grid(row=3, column=1, columnspan=2, padx=(0, 18), pady=(8, 10), sticky="ew")
+        self.add_column_button.grid(row=2, column=2, padx=(0, 18), pady=(8, 10), sticky="n")
+        self._add_group_column()
 
         self.combine_duplicates_var = ctk.BooleanVar(value=True)
         self.combine_duplicates_checkbox = ctk.CTkCheckBox(
@@ -139,7 +121,7 @@ class ExcelSplitterApp(ctk.CTk):
             text_color=text,
             border_color=teal,
         )
-        self.combine_duplicates_checkbox.grid(row=4, column=0, columnspan=3, padx=(18, 18), pady=(8, 16), sticky="w")
+        self.combine_duplicates_checkbox.grid(row=3, column=0, columnspan=3, padx=(18, 18), pady=(8, 16), sticky="w")
 
         body = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
@@ -174,6 +156,57 @@ class ExcelSplitterApp(ctk.CTk):
             border_color=teal,
         )
         self.generate_btn.grid(row=2, column=0, padx=18, pady=(0, 18), sticky="ew")
+
+    def _add_group_column(self):
+        teal = "#12454B"
+        teal_dark = "#0C3035"
+        ivory_alt = "#F3EEE3"
+        text = "#14353A"
+        row_frame = ctk.CTkFrame(self.group_columns_frame, fg_color="transparent")
+        row_frame.grid(row=len(self.group_column_controls), column=0, pady=2, sticky="ew")
+        row_frame.grid_columnconfigure(0, weight=1)
+        variable = ctk.StringVar(value="")
+        dropdown = ctk.CTkOptionMenu(
+            row_frame,
+            values=self.headers or ["Select a column"],
+            variable=variable,
+            command=self.on_column_selection_changed,
+            fg_color=ivory_alt,
+            button_color=teal,
+            button_hover_color=teal_dark,
+            text_color=text,
+            dropdown_fg_color="#FFFFFF",
+            dropdown_text_color=text,
+            dropdown_hover_color=ivory_alt,
+            height=34,
+        )
+        dropdown.grid(row=0, column=0, sticky="ew")
+        remove_button = None
+        if self.group_column_controls:
+            remove_button = ctk.CTkButton(
+                row_frame,
+                text="Remove",
+                command=lambda: self._remove_group_column(row_frame, variable),
+                width=78,
+                height=34,
+                fg_color="#D7D0C3",
+                hover_color="#B9AEA0",
+                text_color="#14353A",
+            )
+            remove_button.grid(row=0, column=1, padx=(8, 0))
+        self.group_column_controls.append((row_frame, variable, dropdown, remove_button))
+
+    def _remove_group_column(self, row_frame, variable):
+        if len(self.group_column_controls) <= 1:
+            return
+        row_frame.destroy()
+        self.group_column_controls = [control for control in self.group_column_controls if control[1] is not variable]
+        for index, (frame, *_rest) in enumerate(self.group_column_controls):
+            frame.grid_configure(row=index)
+        self.on_column_selection_changed()
+
+    def _selected_group_columns(self):
+        return [variable.get() for _frame, variable, _dropdown, _remove in self.group_column_controls if variable.get()]
 
     def browse_file(self):
         filetypes = [("Excel files", "*.xlsx *.xlsm *.xls")]
@@ -221,8 +254,8 @@ class ExcelSplitterApp(ctk.CTk):
             self.groups = {}
             self.sheet_dropdown.configure(values=sheet_names)
             self.sheet_var.set(sheet_names[0] if sheet_names else "")
-            self.department_var.set("")
-            self.id_var.set("")
+            for _frame, variable, _dropdown, _remove in self.group_column_controls:
+                variable.set("")
             self._clear_group_list()
             if sheet_names:
                 self.on_sheet_selected(sheet_names[0])
@@ -231,8 +264,8 @@ class ExcelSplitterApp(ctk.CTk):
             messagebox.showerror("Unable to load workbook", f"{exc}")
             self.progress_var.set("Failed to load workbook.")
             self.sheet_dropdown.configure(values=[])
-            self.department_dropdown.configure(values=[])
-            self.id_dropdown.configure(values=[])
+            for _frame, _variable, dropdown, _remove in self.group_column_controls:
+                dropdown.configure(values=[])
 
     def on_sheet_selected(self, sheet_name):
         if not sheet_name or not self.workbook:
@@ -246,21 +279,13 @@ class ExcelSplitterApp(ctk.CTk):
 
             headers = list(sheet.columns)
             self.headers = ["" if value is None else str(value).strip() for value in headers]
-            self.department_dropdown.configure(values=self.headers)
-            self.id_dropdown.configure(values=self.headers)
+            for _frame, _variable, dropdown, _remove in self.group_column_controls:
+                dropdown.configure(values=self.headers)
 
             department_default = next((h for h in self.headers if h.lower() == "department"), "")
-            id_default = next((h for h in self.headers if h.lower() in {"id number", "id_number", "employment status", "status"}), "")
-
-            if department_default:
-                self.department_var.set(department_default)
-            elif self.headers:
-                self.department_var.set(self.headers[0])
-
-            if id_default:
-                self.id_var.set(id_default)
-            elif self.headers:
-                self.id_var.set(self.headers[0])
+            first_column = department_default or (self.headers[0] if self.headers else "")
+            for index, (_frame, variable, _dropdown, _remove) in enumerate(self.group_column_controls):
+                variable.set(first_column if index == 0 else "")
 
             self._populate_groups(sheet)
         except Exception as exc:
@@ -287,15 +312,14 @@ class ExcelSplitterApp(ctk.CTk):
         teal_dark = "#0C3035"
 
         try:
-            dep_name = self.department_var.get()
-            id_name = self.id_var.get()
-            if not dep_name or not id_name:
+            grouping_columns = self._selected_group_columns()
+            if not grouping_columns:
                 self.groups = {}
-                ctk.CTkLabel(self.groups_frame, text="Please select both required columns.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
+                ctk.CTkLabel(self.groups_frame, text="Please select at least one grouping column.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
                 return
 
             if len(self.file_paths) == 1:
-                headers, groups = build_group_map(sheet, dep_name, id_name)
+                headers, groups = build_group_map(sheet, grouping_columns[0], grouping_columns=grouping_columns)
             else:
                 groups = OrderedDict()
                 for file_path in self.file_paths:
@@ -305,7 +329,7 @@ class ExcelSplitterApp(ctk.CTk):
                         sheet_name=self.selected_sheet_name,
                         engine=engine,
                     )
-                    _, source_groups = build_group_map(source_sheet, dep_name, id_name)
+                    _, source_groups = build_group_map(source_sheet, grouping_columns[0], grouping_columns=grouping_columns)
                     for group_key, rows in source_groups.items():
                         groups.setdefault(group_key, []).extend(rows)
             self.groups = groups
@@ -314,8 +338,8 @@ class ExcelSplitterApp(ctk.CTk):
                 return
 
             self.group_checkboxes = {}
-            for (department, status), rows in groups.items():
-                label = f"{department} - {status}"
+            for group_key, rows in groups.items():
+                label = " - ".join(group_key)
                 count = len(rows)
                 cb = ctk.CTkCheckBox(
                     self.groups_frame,
@@ -329,7 +353,7 @@ class ExcelSplitterApp(ctk.CTk):
                 )
                 cb.select()
                 cb.grid(sticky="w", padx=16, pady=6)
-                self.group_checkboxes[(department, status)] = cb
+                self.group_checkboxes[group_key] = cb
         except Exception as exc:
             ctk.CTkLabel(self.groups_frame, text=f"Unable to detect groups: {exc}", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
 
@@ -340,13 +364,10 @@ class ExcelSplitterApp(ctk.CTk):
         if not self.selected_sheet_name:
             messagebox.showerror("Missing worksheet", "Please select a worksheet to process.")
             return
-        if not self.department_var.get():
-            messagebox.showerror("Missing Department column", "Please select the Department column.")
+        grouping_columns = self._selected_group_columns()
+        if not grouping_columns:
+            messagebox.showerror("Missing grouping column", "Please select at least one grouping column.")
             return
-        if not self.id_var.get():
-            messagebox.showerror("Missing ID Number column", "Please select the ID Number / Employment Status column.")
-            return
-
         selected_groups = {key for key, cb in self.group_checkboxes.items() if cb.get()}
         if not selected_groups:
             messagebox.showerror("No groups selected", "Please choose at least one group to generate.")
@@ -363,6 +384,7 @@ class ExcelSplitterApp(ctk.CTk):
     def _generate_workbook(self, selected_groups):
         temporary_path = None
         try:
+            grouping_columns = self._selected_group_columns()
             temporary_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
             temporary_path = temporary_file.name
             temporary_file.close()
@@ -375,12 +397,13 @@ class ExcelSplitterApp(ctk.CTk):
             result = split_workbooks(
                 self.file_paths,
                 self.selected_sheet_name,
-                self.department_var.get(),
-                self.id_var.get(),
+                grouping_columns[0],
+                grouping_columns[1] if len(grouping_columns) > 1 else None,
                 temporary_path,
                 selected_groups,
                 progress_callback=progress_update,
                 combine_duplicates=self.combine_duplicates_var.get(),
+                grouping_columns=grouping_columns,
             )
 
             created = result.get("created_sheets", 0)
