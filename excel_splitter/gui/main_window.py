@@ -10,7 +10,20 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
-from excel_splitter.core import ALL_SHEETS, WorkbookProcessingError, _iter_input_tables, _normalize_input_tables, _read_input_file, _select_excel_engine, build_group_map, split_workbooks
+from excel_splitter.core import (
+    ALL_SHEETS,
+    SORT_ALPHABETICAL,
+    SORT_COUNT_ASCENDING,
+    SORT_COUNT_DESCENDING,
+    WorkbookProcessingError,
+    _iter_input_tables,
+    _normalize_input_tables,
+    _read_input_file,
+    _select_excel_engine,
+    build_group_map,
+    sort_group_items,
+    split_workbooks,
+)
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -126,11 +139,29 @@ class ExcelSplitterApp(ctk.CTk):
         body = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, weight=0)
         body.grid_rowconfigure(0, weight=1)
 
-        ctk.CTkLabel(body, text="Detected Groups", text_color=text, font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=18, pady=(18, 10), sticky="w")
+        ctk.CTkLabel(body, text="Detected Groups", text_color=text, font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=(18, 8), pady=(18, 10), sticky="w")
+        self.group_sort_var = ctk.StringVar(value="Alphabetical")
+        self.group_sort_dropdown = ctk.CTkOptionMenu(
+            body,
+            values=["Alphabetical", "Record count: ascending", "Record count: descending"],
+            variable=self.group_sort_var,
+            command=self._on_group_sort_changed,
+            fg_color=ivory_alt,
+            button_color=teal,
+            button_hover_color=teal_dark,
+            text_color=text,
+            dropdown_fg_color="#FFFFFF",
+            dropdown_text_color=text,
+            dropdown_hover_color=ivory_alt,
+            width=210,
+            height=34,
+        )
+        self.group_sort_dropdown.grid(row=0, column=1, padx=(8, 18), pady=(14, 10), sticky="e")
         self.groups_frame = ctk.CTkScrollableFrame(body, corner_radius=12, fg_color=ivory)
-        self.groups_frame.grid(row=1, column=0, padx=18, pady=(0, 18), sticky="nsew")
+        self.groups_frame.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
         self.groups_frame.grid_columnconfigure(0, weight=1)
 
         bottom = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
@@ -338,17 +369,54 @@ class ExcelSplitterApp(ctk.CTk):
         normalized_tables, _headers = _normalize_input_tables(input_tables)
         return [table for _source_name, table in normalized_tables]
 
+    def _selected_sort_mode(self):
+        return {
+            "Alphabetical": SORT_ALPHABETICAL,
+            "Record count: ascending": SORT_COUNT_ASCENDING,
+            "Record count: descending": SORT_COUNT_DESCENDING,
+        }[self.group_sort_var.get()]
+
+    def _on_group_sort_changed(self, _value=None):
+        selected_groups = {key for key, checkbox in self.group_checkboxes.items() if checkbox.get()}
+        self._render_groups(selected_groups)
+
     def _clear_group_list(self):
         for widget in self.groups_frame.winfo_children():
             widget.destroy()
+        self.group_checkboxes = {}
+
+    def _render_groups(self, selected_groups=None):
+        self._clear_group_list()
+        if not self.groups:
+            ctk.CTkLabel(self.groups_frame, text="No groups detected.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
+            return
+
+        if selected_groups is None:
+            selected_groups = set(self.groups)
+
+        teal = "#12454B"
+        teal_dark = "#0C3035"
+        for group_key, rows in sort_group_items(self.groups, self._selected_sort_mode()):
+            label = " - ".join(group_key)
+            cb = ctk.CTkCheckBox(
+                self.groups_frame,
+                text=f"{label}     {len(rows)} records",
+                onvalue=True,
+                offvalue=False,
+                text_color="black",
+                fg_color=teal,
+                hover_color=teal_dark,
+                border_color=teal,
+            )
+            if group_key in selected_groups:
+                cb.select()
+            cb.grid(sticky="w", padx=16, pady=6)
+            self.group_checkboxes[group_key] = cb
 
     def _populate_groups(self, sheet):
         self._clear_group_list()
         if not self.headers:
             return
-
-        teal = "#12454B"
-        teal_dark = "#0C3035"
 
         try:
             grouping_columns = self._selected_group_columns()
@@ -378,27 +446,12 @@ class ExcelSplitterApp(ctk.CTk):
                         groups.setdefault(group_key, []).extend(rows)
             self.groups = groups
             if not groups:
-                ctk.CTkLabel(self.groups_frame, text="No groups detected.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
+                self._render_groups()
                 return
-
-            self.group_checkboxes = {}
-            for group_key, rows in groups.items():
-                label = " - ".join(group_key)
-                count = len(rows)
-                cb = ctk.CTkCheckBox(
-                    self.groups_frame,
-                    text=f"{label}     {count} records",
-                    onvalue=True,
-                    offvalue=False,
-                    text_color="black",
-                    fg_color=teal,
-                    hover_color=teal_dark,
-                    border_color=teal,
-                )
-                cb.select()
-                cb.grid(sticky="w", padx=16, pady=6)
-                self.group_checkboxes[group_key] = cb
+            self._render_groups()
         except Exception as exc:
+            self.groups = {}
+            self.group_checkboxes = {}
             ctk.CTkLabel(self.groups_frame, text=f"Unable to detect groups: {exc}", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
 
     def start_generation(self):
@@ -422,10 +475,14 @@ class ExcelSplitterApp(ctk.CTk):
         self.progress_bar.set(0)
         self.update_idletasks()
 
-        thread = threading.Thread(target=self._generate_workbook, args=(selected_groups,), daemon=True)
+        thread = threading.Thread(
+            target=self._generate_workbook,
+            args=(selected_groups, self._selected_sort_mode()),
+            daemon=True,
+        )
         thread.start()
 
-    def _generate_workbook(self, selected_groups):
+    def _generate_workbook(self, selected_groups, sort_mode):
         temporary_path = None
         try:
             grouping_columns = self._selected_group_columns()
@@ -448,6 +505,7 @@ class ExcelSplitterApp(ctk.CTk):
                 progress_callback=progress_update,
                 combine_duplicates=self.combine_duplicates_var.get(),
                 grouping_columns=grouping_columns,
+                sort_mode=sort_mode,
             )
 
             created = result.get("created_sheets", 0)

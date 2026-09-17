@@ -8,6 +8,7 @@ This application lets you select an Excel workbook, choose a worksheet, select o
 - View available worksheets or choose `All sheets`; CSV files are treated as a single worksheet
 - Select one grouping column by default and add more grouping columns as needed
 - Preview all detected groups for the selected column combination
+- Sort detected groups alphabetically or by record count
 - Uncheck groups you do not want to generate
 - Sanitize sheet names for Excel restrictions
 - Preserve source rows and headers in each generated sheet
@@ -59,3 +60,5 @@ Each unique combination becomes a separate worksheet with the original headers a
 CSV files are read as single-sheet tabular data and are exported to an Excel workbook using the same grouping process. Excel and CSV files can be uploaded together; Excel worksheets and CSV files are all combined when `All sheets` is selected.
 
 Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. Different files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and files are skipped.
+
+Detected groups can be sorted alphabetically, by record count ascending, or by record count descending. The selected order is also used for the generated worksheets.

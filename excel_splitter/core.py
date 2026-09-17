@@ -16,6 +16,18 @@ class WorkbookProcessingError(ValueError):
 
 
 ALL_SHEETS = "__ALL_SHEETS__"
+SORT_ALPHABETICAL = "alphabetical"
+SORT_COUNT_ASCENDING = "count_ascending"
+SORT_COUNT_DESCENDING = "count_descending"
+
+
+def sort_group_items(groups, sort_mode: str = SORT_ALPHABETICAL):
+    items = list(groups.items())
+    if sort_mode == SORT_COUNT_ASCENDING:
+        return sorted(items, key=lambda item: len(item[1]))
+    if sort_mode == SORT_COUNT_DESCENDING:
+        return sorted(items, key=lambda item: len(item[1]), reverse=True)
+    return sorted(items, key=lambda item: " - ".join(item[0]).casefold())
 
 
 def _select_excel_engine(file_path: str) -> str | None:
@@ -166,16 +178,18 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
                    output_file: str, selected_groups: set[tuple[str, str]] | None = None,
                    progress_callback: Callable[[int, str], None] | None = None,
            combine_duplicates: bool = True,
-           grouping_columns: list[str] | None = None):
+           grouping_columns: list[str] | None = None,
+           sort_mode: str = SORT_ALPHABETICAL):
     return split_workbooks([file_path], sheet_name, department_column, id_number_column, output_file,
-               selected_groups, progress_callback, combine_duplicates, grouping_columns)
+               selected_groups, progress_callback, combine_duplicates, grouping_columns, sort_mode)
 
 
 def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str | None,
                     output_file: str, selected_groups: set[tuple[str, str]] | None = None,
                     progress_callback: Callable[[int, str], None] | None = None,
                     combine_duplicates: bool = True,
-                    grouping_columns: list[str] | None = None):
+                    grouping_columns: list[str] | None = None,
+                    sort_mode: str = SORT_ALPHABETICAL):
     if not file_paths:
         raise WorkbookProcessingError("No files were selected for processing.")
 
@@ -214,11 +228,12 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     output_ext = os.path.splitext(output_file)[1].lower()
     used_names: set[str] = set()
     processed_rows = 0
-    total_groups = len(combined_groups)
+    ordered_groups = sort_group_items(combined_groups, sort_mode)
+    total_groups = len(ordered_groups)
 
     if output_ext == ".xls":
         workbook = xlwt.Workbook()
-        for index, (group_key, rows) in enumerate(combined_groups.items(), start=1):
+        for index, (group_key, rows) in enumerate(ordered_groups, start=1):
             if group_key not in selected_groups:
                 continue
 
@@ -249,7 +264,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     default_sheet = output_wb.active
     output_wb.remove(default_sheet)
 
-    for index, (group_key, rows) in enumerate(combined_groups.items(), start=1):
+    for index, (group_key, rows) in enumerate(ordered_groups, start=1):
         if group_key not in selected_groups:
             continue
 

@@ -1,7 +1,38 @@
 import pandas as pd
-import pytest
 
-from excel_splitter.core import ALL_SHEETS, build_group_map, split_workbooks
+from excel_splitter.core import (
+    ALL_SHEETS,
+    SORT_ALPHABETICAL,
+    SORT_COUNT_ASCENDING,
+    SORT_COUNT_DESCENDING,
+    build_group_map,
+    sort_group_items,
+    split_workbooks,
+)
+
+
+def test_sort_group_items_supports_all_modes():
+    groups = {
+        ("beta",): [1],
+        ("Alpha",): [1, 2],
+        ("gamma",): [1, 2, 3],
+    }
+
+    assert [key for key, _rows in sort_group_items(groups, SORT_ALPHABETICAL)] == [
+        ("Alpha",), ("beta",), ("gamma",),
+    ]
+    assert [key for key, _rows in sort_group_items(groups, SORT_COUNT_ASCENDING)] == [
+        ("beta",), ("Alpha",), ("gamma",),
+    ]
+    assert [key for key, _rows in sort_group_items(groups, SORT_COUNT_DESCENDING)] == [
+        ("gamma",), ("Alpha",), ("beta",),
+    ]
+
+
+def test_sort_group_items_preserves_order_for_equal_counts():
+    groups = {("First",): [1], ("Second",): [2]}
+
+    assert list(sort_group_items(groups, SORT_COUNT_ASCENDING)) == list(groups.items())
 
 
 def test_group_map_allows_missing_second_column():
@@ -125,3 +156,24 @@ def test_multiple_workbooks_with_different_sheet_names_are_combined(tmp_path):
 
     assert result["processed_rows"] == 2
     assert result["created_sheets"] == 2
+
+
+def test_generated_worksheets_follow_sort_order(tmp_path):
+    source = tmp_path / "employees.csv"
+    output = tmp_path / "split.xlsx"
+    pd.DataFrame({
+        "Department": ["beta", "Alpha", "Alpha", "gamma", "gamma", "gamma"],
+    }).to_csv(source, index=False)
+
+    split_workbooks(
+        [str(source)],
+        "CSV file",
+        "Department",
+        None,
+        str(output),
+        grouping_columns=["Department"],
+        sort_mode=SORT_COUNT_DESCENDING,
+    )
+
+    workbook = pd.ExcelFile(output)
+    assert workbook.sheet_names == ["gamma", "Alpha", "beta"]
