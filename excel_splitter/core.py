@@ -46,6 +46,34 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
             yield source_sheet_name, pd.read_excel(file_path, sheet_name=source_sheet_name, engine=engine)
 
 
+def _normalize_input_tables(input_tables):
+    tables = []
+    headers: list[str] = []
+    seen_headers: set[str] = set()
+
+    for source_name, table in input_tables:
+        normalized_table = table.copy()
+        normalized_headers = detect_header_names(normalized_table.columns)
+        if len(normalized_headers) != len(set(normalized_headers)):
+            raise WorkbookProcessingError(f"Duplicate column headers found in '{source_name}'.")
+
+        normalized_table.columns = normalized_headers
+        for header in normalized_headers:
+            if header not in seen_headers:
+                headers.append(header)
+                seen_headers.add(header)
+        tables.append((source_name, normalized_table))
+
+    if not tables:
+        return [], headers
+
+    aligned_tables = [
+        (source_name, table.reindex(columns=headers))
+        for source_name, table in tables
+    ]
+    return aligned_tables, headers
+
+
 def _ensure_python_value(value):
     if pd.isna(value):
         return None
@@ -152,35 +180,27 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
         raise WorkbookProcessingError("No files were selected for processing.")
 
     combined_groups: OrderedDict[tuple[str, ...], list[tuple]] = OrderedDict()
-    combined_headers: list[str] | None = None
     total_files = len(file_paths)
-    processed_tables = 0
+    input_tables = []
 
     for file_index, file_path in enumerate(file_paths, start=1):
         for source_sheet_name, source_df in _iter_input_tables(file_path, sheet_name):
-            if source_df.empty:
-                continue
-
-            headers, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
-            if combined_headers is None:
-                combined_headers = headers
-            elif headers != combined_headers:
-                raise WorkbookProcessingError(
-                    f"Headers in '{source_sheet_name}' of '{os.path.basename(file_path)}' "
-                    "do not match the other selected worksheets."
-                )
-
-            for group_key, rows in groups.items():
-                if combine_duplicates:
-                    combined_groups.setdefault(group_key, []).extend(rows)
-                else:
-                    unique_key = (*group_key, f"{os.path.basename(file_path)} - {source_sheet_name}")
-                    combined_groups.setdefault(unique_key, []).extend(rows)
-
-            processed_tables += 1
+            if not source_df.empty:
+                source_label = f"{os.path.basename(file_path)} - {source_sheet_name}"
+                input_tables.append((source_label, source_df))
 
         if progress_callback:
             progress_callback(int((file_index / total_files) * 40), f"Reading: {os.path.basename(file_path)}")
+
+    normalized_tables, combined_headers = _normalize_input_tables(input_tables)
+    for source_label, source_df in normalized_tables:
+        _, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
+        for group_key, rows in groups.items():
+            if combine_duplicates:
+                combined_groups.setdefault(group_key, []).extend(rows)
+            else:
+                unique_key = (*group_key, source_label)
+                combined_groups.setdefault(unique_key, []).extend(rows)
 
     if not combined_groups:
         raise WorkbookProcessingError("No valid rows were found across the selected files.")

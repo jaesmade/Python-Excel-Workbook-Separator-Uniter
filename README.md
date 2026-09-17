@@ -56,6 +56,6 @@ If a selected grouping value is empty, it is replaced with:
 
 Each unique combination becomes a separate worksheet with the original headers and matching records. Leaving only the default grouping column selected creates one sheet per value in that column.
 
-CSV files are read as single-sheet tabular data and are exported to an Excel workbook using the same grouping process. When uploading multiple files, select either multiple Excel files or multiple CSV files; mixed file types are not supported.
+CSV files are read as single-sheet tabular data and are exported to an Excel workbook using the same grouping process. Excel and CSV files can be uploaded together; Excel worksheets and CSV files are all combined when `All sheets` is selected.
 
-Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. Worksheets must use the same headers in the same order; empty worksheets are skipped.
+Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. Different files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and files are skipped.

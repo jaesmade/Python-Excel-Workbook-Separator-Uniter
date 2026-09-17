@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
-from excel_splitter.core import ALL_SHEETS, WorkbookProcessingError, _iter_input_tables, _read_input_file, _select_excel_engine, build_group_map, split_workbooks
+from excel_splitter.core import ALL_SHEETS, WorkbookProcessingError, _iter_input_tables, _normalize_input_tables, _read_input_file, _select_excel_engine, build_group_map, split_workbooks
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -214,11 +214,6 @@ class ExcelSplitterApp(ctk.CTk):
         if not selected:
             return
 
-        extensions = {os.path.splitext(path)[1].lower() for path in selected}
-        if len(extensions) > 1:
-            messagebox.showerror("Mixed file types", "Please select either Excel files or CSV files, not both.")
-            return
-
         self.file_paths = list(selected)
         self.file_path = self.file_paths[0]
         if len(self.file_paths) == 1:
@@ -251,7 +246,13 @@ class ExcelSplitterApp(ctk.CTk):
 
         try:
             workbook_sheet_names = []
-            if os.path.splitext(file_path)[1].lower() == ".csv":
+            extensions = {os.path.splitext(path)[1].lower() for path in self.file_paths}
+            has_excel = bool(extensions & {".xlsx", ".xlsm", ".xls"})
+            has_csv = ".csv" in extensions
+            if has_excel and has_csv:
+                sheet_names = [ALL_SHEETS]
+                self.workbook = {}
+            elif os.path.splitext(file_path)[1].lower() == ".csv":
                 sheet_names = ["CSV file"]
                 self.workbook = {sheet_names[0]: _read_input_file(file_path)}
             else:
@@ -267,7 +268,7 @@ class ExcelSplitterApp(ctk.CTk):
             self.headers = []
             self.groups = {}
             self.sheet_dropdown.configure(values=sheet_names)
-            default_sheet = "CSV file" if os.path.splitext(file_path)[1].lower() == ".csv" else (workbook_sheet_names[0] if workbook_sheet_names else "")
+            default_sheet = ALL_SHEETS if has_excel and has_csv else ("CSV file" if os.path.splitext(file_path)[1].lower() == ".csv" else (workbook_sheet_names[0] if workbook_sheet_names else ""))
             self.sheet_var.set(default_sheet)
             for _frame, variable, _dropdown, _remove in self.group_column_controls:
                 variable.set("")
@@ -327,22 +328,14 @@ class ExcelSplitterApp(ctk.CTk):
         self._populate_groups(sheet)
 
     def _selected_tables(self):
-        tables = []
-        expected_headers = None
+        input_tables = []
         for file_path in self.file_paths:
             for source_sheet_name, table in _iter_input_tables(file_path, self.selected_sheet_name):
                 if table.empty:
                     continue
-                headers = ["" if value is None else str(value).strip() for value in table.columns]
-                if expected_headers is None:
-                    expected_headers = headers
-                elif headers != expected_headers:
-                    raise WorkbookProcessingError(
-                        f"Headers in '{source_sheet_name}' of '{os.path.basename(file_path)}' "
-                        "do not match the other selected worksheets."
-                    )
-                tables.append(table)
-        return tables
+                input_tables.append((f"{os.path.basename(file_path)} - {source_sheet_name}", table))
+        normalized_tables, _headers = _normalize_input_tables(input_tables)
+        return [table for _source_name, table in normalized_tables]
 
     def _clear_group_list(self):
         for widget in self.groups_frame.winfo_children():
