@@ -15,6 +15,9 @@ class WorkbookProcessingError(ValueError):
     pass
 
 
+ALL_SHEETS = "__ALL_SHEETS__"
+
+
 def _select_excel_engine(file_path: str) -> str | None:
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".xls":
@@ -29,6 +32,18 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
     if extension == ".csv":
         return pd.read_csv(file_path)
     return pd.read_excel(file_path, sheet_name=sheet_name, engine=_select_excel_engine(file_path))
+
+
+def _iter_input_tables(file_path: str, sheet_name: str | None):
+    if os.path.splitext(file_path)[1].lower() == ".csv":
+        yield "CSV file", _read_input_file(file_path)
+        return
+
+    engine = _select_excel_engine(file_path)
+    with pd.ExcelFile(file_path, engine=engine) as workbook:
+        selected_sheets = workbook.sheet_names if sheet_name == ALL_SHEETS else [sheet_name]
+        for source_sheet_name in selected_sheets:
+            yield source_sheet_name, pd.read_excel(file_path, sheet_name=source_sheet_name, engine=engine)
 
 
 def _ensure_python_value(value):
@@ -136,26 +151,33 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     if not file_paths:
         raise WorkbookProcessingError("No files were selected for processing.")
 
-    combined_groups: OrderedDict[tuple[str, str], list[tuple]] = OrderedDict()
+    combined_groups: OrderedDict[tuple[str, ...], list[tuple]] = OrderedDict()
     combined_headers: list[str] | None = None
     total_files = len(file_paths)
+    processed_tables = 0
 
     for file_index, file_path in enumerate(file_paths, start=1):
-        source_df = _read_input_file(file_path, sheet_name)
-        headers, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
-        if combined_headers is None:
-            combined_headers = headers
+        for source_sheet_name, source_df in _iter_input_tables(file_path, sheet_name):
+            if source_df.empty:
+                continue
 
-        for group_key, rows in groups.items():
-            if combine_duplicates:
-                if group_key not in combined_groups:
-                    combined_groups[group_key] = []
-                combined_groups[group_key].extend(rows)
-            else:
-                unique_key = (group_key[0], group_key[1], os.path.basename(file_path))
-                if unique_key not in combined_groups:
-                    combined_groups[unique_key] = []
-                combined_groups[unique_key].extend(rows)
+            headers, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
+            if combined_headers is None:
+                combined_headers = headers
+            elif headers != combined_headers:
+                raise WorkbookProcessingError(
+                    f"Headers in '{source_sheet_name}' of '{os.path.basename(file_path)}' "
+                    "do not match the other selected worksheets."
+                )
+
+            for group_key, rows in groups.items():
+                if combine_duplicates:
+                    combined_groups.setdefault(group_key, []).extend(rows)
+                else:
+                    unique_key = (*group_key, f"{os.path.basename(file_path)} - {source_sheet_name}")
+                    combined_groups.setdefault(unique_key, []).extend(rows)
+
+            processed_tables += 1
 
         if progress_callback:
             progress_callback(int((file_index / total_files) * 40), f"Reading: {os.path.basename(file_path)}")

@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
-from excel_splitter.core import WorkbookProcessingError, _read_input_file, _select_excel_engine, build_group_map, split_workbooks
+from excel_splitter.core import ALL_SHEETS, WorkbookProcessingError, _iter_input_tables, _read_input_file, _select_excel_engine, build_group_map, split_workbooks
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -250,24 +250,30 @@ class ExcelSplitterApp(ctk.CTk):
         self.update_idletasks()
 
         try:
+            workbook_sheet_names = []
             if os.path.splitext(file_path)[1].lower() == ".csv":
                 sheet_names = ["CSV file"]
                 self.workbook = {sheet_names[0]: _read_input_file(file_path)}
             else:
                 engine = _select_excel_engine(file_path)
-                workbook = pd.ExcelFile(file_path, engine=engine)
-                sheet_names = workbook.sheet_names
-                self.workbook = {name: pd.read_excel(file_path, sheet_name=name, engine=engine) for name in sheet_names}
+                with pd.ExcelFile(file_path, engine=engine) as workbook:
+                    workbook_sheet_names = workbook.sheet_names
+                    sheet_names = [ALL_SHEETS, *workbook_sheet_names]
+                    self.workbook = {
+                        name: pd.read_excel(file_path, sheet_name=name, engine=engine)
+                        for name in workbook_sheet_names
+                    }
             self.selected_sheet_name = None
             self.headers = []
             self.groups = {}
             self.sheet_dropdown.configure(values=sheet_names)
-            self.sheet_var.set(sheet_names[0] if sheet_names else "")
+            default_sheet = "CSV file" if os.path.splitext(file_path)[1].lower() == ".csv" else (workbook_sheet_names[0] if workbook_sheet_names else "")
+            self.sheet_var.set(default_sheet)
             for _frame, variable, _dropdown, _remove in self.group_column_controls:
                 variable.set("")
             self._clear_group_list()
-            if sheet_names:
-                self.on_sheet_selected(sheet_names[0])
+            if default_sheet:
+                self.on_sheet_selected(default_sheet)
             self.progress_var.set("Workbook loaded successfully.")
         except Exception as exc:
             messagebox.showerror("Unable to load workbook", f"{exc}")
@@ -282,7 +288,13 @@ class ExcelSplitterApp(ctk.CTk):
 
         self.selected_sheet_name = sheet_name
         try:
-            sheet = self.workbook[sheet_name]
+            if sheet_name == ALL_SHEETS:
+                tables = self._selected_tables()
+                if not tables:
+                    raise WorkbookProcessingError("The selected workbook does not contain any data.")
+                sheet = pd.concat(tables, ignore_index=True)
+            else:
+                sheet = self.workbook[sheet_name]
             if sheet.empty:
                 raise WorkbookProcessingError("The selected worksheet does not contain any data.")
 
@@ -305,8 +317,32 @@ class ExcelSplitterApp(ctk.CTk):
     def on_column_selection_changed(self, _event=None):
         if not self.workbook or not self.selected_sheet_name:
             return
-        sheet = self.workbook[self.selected_sheet_name]
+        if self.selected_sheet_name == ALL_SHEETS:
+            tables = self._selected_tables()
+            if not tables:
+                return
+            sheet = pd.concat(tables, ignore_index=True)
+        else:
+            sheet = self.workbook[self.selected_sheet_name]
         self._populate_groups(sheet)
+
+    def _selected_tables(self):
+        tables = []
+        expected_headers = None
+        for file_path in self.file_paths:
+            for source_sheet_name, table in _iter_input_tables(file_path, self.selected_sheet_name):
+                if table.empty:
+                    continue
+                headers = ["" if value is None else str(value).strip() for value in table.columns]
+                if expected_headers is None:
+                    expected_headers = headers
+                elif headers != expected_headers:
+                    raise WorkbookProcessingError(
+                        f"Headers in '{source_sheet_name}' of '{os.path.basename(file_path)}' "
+                        "do not match the other selected worksheets."
+                    )
+                tables.append(table)
+        return tables
 
     def _clear_group_list(self):
         for widget in self.groups_frame.winfo_children():
@@ -327,7 +363,16 @@ class ExcelSplitterApp(ctk.CTk):
                 ctk.CTkLabel(self.groups_frame, text="Please select at least one grouping column.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
                 return
 
-            if len(self.file_paths) == 1:
+            if self.selected_sheet_name == ALL_SHEETS:
+                tables = self._selected_tables()
+                if not tables:
+                    raise WorkbookProcessingError("No data was found in the selected worksheets.")
+                groups = OrderedDict()
+                for source_sheet in tables:
+                    _, source_groups = build_group_map(source_sheet, grouping_columns[0], grouping_columns=grouping_columns)
+                    for group_key, rows in source_groups.items():
+                        groups.setdefault(group_key, []).extend(rows)
+            elif len(self.file_paths) == 1:
                 headers, groups = build_group_map(sheet, grouping_columns[0], grouping_columns=grouping_columns)
             else:
                 groups = OrderedDict()
