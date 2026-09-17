@@ -1,4 +1,4 @@
-# Excel Department & Employment Status Splitter
+# Excel Column Splitter
 
 This application lets you select an Excel workbook, choose a worksheet, select one or more grouping columns, review detected groups, and generate a new workbook with one worksheet per unique grouping combination.
 
