@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
-from excel_splitter.core import WorkbookProcessingError, _select_excel_engine, build_group_map, split_workbooks
+from excel_splitter.core import WorkbookProcessingError, _read_input_file, _select_excel_engine, build_group_map, split_workbooks
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -209,9 +209,14 @@ class ExcelSplitterApp(ctk.CTk):
         return [variable.get() for _frame, variable, _dropdown, _remove in self.group_column_controls if variable.get()]
 
     def browse_file(self):
-        filetypes = [("Excel files", "*.xlsx *.xlsm *.xls")]
-        selected = filedialog.askopenfilenames(title="Select Excel workbooks", filetypes=filetypes)
+        filetypes = [("Excel and CSV files", "*.xlsx *.xlsm *.xls *.csv")]
+        selected = filedialog.askopenfilenames(title="Select Excel or CSV files", filetypes=filetypes)
         if not selected:
+            return
+
+        extensions = {os.path.splitext(path)[1].lower() for path in selected}
+        if len(extensions) > 1:
+            messagebox.showerror("Mixed file types", "Please select either Excel files or CSV files, not both.")
             return
 
         self.file_paths = list(selected)
@@ -245,10 +250,14 @@ class ExcelSplitterApp(ctk.CTk):
         self.update_idletasks()
 
         try:
-            engine = _select_excel_engine(file_path)
-            workbook = pd.ExcelFile(file_path, engine=engine)
-            sheet_names = workbook.sheet_names
-            self.workbook = {name: pd.read_excel(file_path, sheet_name=name, engine=engine) for name in sheet_names}
+            if os.path.splitext(file_path)[1].lower() == ".csv":
+                sheet_names = ["CSV file"]
+                self.workbook = {sheet_names[0]: _read_input_file(file_path)}
+            else:
+                engine = _select_excel_engine(file_path)
+                workbook = pd.ExcelFile(file_path, engine=engine)
+                sheet_names = workbook.sheet_names
+                self.workbook = {name: pd.read_excel(file_path, sheet_name=name, engine=engine) for name in sheet_names}
             self.selected_sheet_name = None
             self.headers = []
             self.groups = {}
@@ -324,11 +333,7 @@ class ExcelSplitterApp(ctk.CTk):
                 groups = OrderedDict()
                 for file_path in self.file_paths:
                     engine = _select_excel_engine(file_path)
-                    source_sheet = pd.read_excel(
-                        file_path,
-                        sheet_name=self.selected_sheet_name,
-                        engine=engine,
-                    )
+                    source_sheet = _read_input_file(file_path, self.selected_sheet_name)
                     _, source_groups = build_group_map(source_sheet, grouping_columns[0], grouping_columns=grouping_columns)
                     for group_key, rows in source_groups.items():
                         groups.setdefault(group_key, []).extend(rows)

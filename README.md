@@ -4,8 +4,8 @@ This application lets you select an Excel workbook, choose a worksheet, select o
 
 ## Features
 
-- Browse for an Excel workbook (.xlsx, .xlsm, .xls)
-- View available worksheets
+- Browse for Excel workbooks (.xlsx, .xlsm, .xls) or CSV files (.csv)
+- View available worksheets; CSV files are treated as a single worksheet
 - Select one grouping column by default and add more grouping columns as needed
 - Preview all detected groups for the selected column combination
 - Uncheck groups you do not want to generate
@@ -55,3 +55,5 @@ If a selected grouping value is empty, it is replaced with:
 - `UNKNOWN GROUP`
 
 Each unique combination becomes a separate worksheet with the original headers and matching records. Leaving only the default grouping column selected creates one sheet per value in that column.
+
+CSV files are read as single-sheet tabular data and are exported to an Excel workbook using the same grouping process. When uploading multiple files, select either multiple Excel files or multiple CSV files; mixed file types are not supported.

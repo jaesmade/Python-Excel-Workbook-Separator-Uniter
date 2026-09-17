@@ -24,6 +24,13 @@ def _select_excel_engine(file_path: str) -> str | None:
     return None
 
 
+def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFrame:
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension == ".csv":
+        return pd.read_csv(file_path)
+    return pd.read_excel(file_path, sheet_name=sheet_name, engine=_select_excel_engine(file_path))
+
+
 def _ensure_python_value(value):
     if pd.isna(value):
         return None
@@ -51,8 +58,7 @@ def _first_row_headers(sheet) -> list[str]:
 
 
 def read_workbook_sheet(file_path: str, sheet_name: str):
-    engine = _select_excel_engine(file_path)
-    data = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
+    data = _read_input_file(file_path, sheet_name)
     headers = _first_row_headers(data)
     if not headers or all((header == "" for header in headers)):
         raise WorkbookProcessingError("The selected worksheet does not contain any data.")
@@ -135,8 +141,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     total_files = len(file_paths)
 
     for file_index, file_path in enumerate(file_paths, start=1):
-        engine = _select_excel_engine(file_path)
-        source_df = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
+        source_df = _read_input_file(file_path, sheet_name)
         headers, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
         if combined_headers is None:
             combined_headers = headers
