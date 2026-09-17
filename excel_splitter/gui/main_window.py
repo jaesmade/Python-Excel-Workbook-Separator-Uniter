@@ -249,7 +249,8 @@ class ExcelSplitterApp(ctk.CTk):
             extensions = {os.path.splitext(path)[1].lower() for path in self.file_paths}
             has_excel = bool(extensions & {".xlsx", ".xlsm", ".xls"})
             has_csv = ".csv" in extensions
-            if has_excel and has_csv:
+            all_excel = has_excel and not has_csv and len(self.file_paths) > 1
+            if has_excel and has_csv or all_excel:
                 sheet_names = [ALL_SHEETS]
                 self.workbook = {}
             elif os.path.splitext(file_path)[1].lower() == ".csv":
@@ -268,7 +269,7 @@ class ExcelSplitterApp(ctk.CTk):
             self.headers = []
             self.groups = {}
             self.sheet_dropdown.configure(values=sheet_names)
-            default_sheet = ALL_SHEETS if has_excel and has_csv else ("CSV file" if os.path.splitext(file_path)[1].lower() == ".csv" else (workbook_sheet_names[0] if workbook_sheet_names else ""))
+            default_sheet = ALL_SHEETS if has_excel and has_csv or all_excel else ("CSV file" if os.path.splitext(file_path)[1].lower() == ".csv" else (workbook_sheet_names[0] if workbook_sheet_names else ""))
             self.sheet_var.set(default_sheet)
             for _frame, variable, _dropdown, _remove in self.group_column_controls:
                 variable.set("")
@@ -284,7 +285,7 @@ class ExcelSplitterApp(ctk.CTk):
                 dropdown.configure(values=[])
 
     def on_sheet_selected(self, sheet_name):
-        if not sheet_name or not self.workbook:
+        if not sheet_name or not self.file_paths:
             return
 
         self.selected_sheet_name = sheet_name
@@ -316,7 +317,7 @@ class ExcelSplitterApp(ctk.CTk):
             self.progress_var.set("Worksheet could not be processed.")
 
     def on_column_selection_changed(self, _event=None):
-        if not self.workbook or not self.selected_sheet_name:
+        if not self.file_paths or not self.selected_sheet_name:
             return
         if self.selected_sheet_name == ALL_SHEETS:
             tables = self._selected_tables()

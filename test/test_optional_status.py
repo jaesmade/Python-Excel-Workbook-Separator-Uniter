@@ -103,3 +103,25 @@ def test_mixed_excel_and_csv_inputs_are_combined(tmp_path):
 
     assert result["processed_rows"] == 2
     assert result["created_sheets"] == 2
+
+
+def test_multiple_workbooks_with_different_sheet_names_are_combined(tmp_path):
+    first = tmp_path / "first.xlsx"
+    second = tmp_path / "second.xlsx"
+    output = tmp_path / "split.xlsx"
+    with pd.ExcelWriter(first, engine="openpyxl") as writer:
+        pd.DataFrame({"Department": ["Sales"], "Name": ["Alice"]}).to_excel(writer, sheet_name="January", index=False)
+    with pd.ExcelWriter(second, engine="openpyxl") as writer:
+        pd.DataFrame({"Department": ["Support"], "Name": ["Bob"]}).to_excel(writer, sheet_name="February", index=False)
+
+    result = split_workbooks(
+        [str(first), str(second)],
+        ALL_SHEETS,
+        "Department",
+        None,
+        str(output),
+        grouping_columns=["Department"],
+    )
+
+    assert result["processed_rows"] == 2
+    assert result["created_sheets"] == 2
