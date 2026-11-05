@@ -4,11 +4,9 @@ import os
 import shutil
 import tempfile
 import threading
-from collections import OrderedDict
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
-import pandas as pd
 
 from excel_splitter.core import (
     ALL_SHEETS,
@@ -18,9 +16,7 @@ from excel_splitter.core import (
     WorkbookProcessingError,
     _iter_input_tables,
     _normalize_input_tables,
-    _read_input_file,
-    _select_excel_engine,
-    build_group_map,
+    build_combined_group_map,
     sort_group_items,
     split_workbooks,
 )
@@ -37,7 +33,9 @@ class ExcelSplitterApp(ctk.CTk):
 
         self.file_path = None
         self.file_paths = []
-        self.workbook = None
+        self.workbook = {}
+        self.input_tables = []
+        self.sheet_options = {}
         self.selected_sheet_name = None
         self.headers = []
         self.groups = {}
@@ -127,6 +125,7 @@ class ExcelSplitterApp(ctk.CTk):
             top,
             text="Combine duplicate groups",
             variable=self.combine_duplicates_var,
+            command=self.on_column_selection_changed,
             onvalue=True,
             offvalue=False,
             fg_color=teal,
@@ -274,65 +273,77 @@ class ExcelSplitterApp(ctk.CTk):
         self.progress_var.set("Loading workbook...")
         self.progress_bar.set(0)
         self.update_idletasks()
+        self.workbook = {}
+        self.input_tables = []
+        self.sheet_options = {}
+        self.sheet_var.set("")
+        self.sheet_dropdown.configure(values=[])
+        self._clear_worksheet_selection()
 
         try:
-            workbook_sheet_names = []
-            extensions = {os.path.splitext(path)[1].lower() for path in self.file_paths}
-            has_excel = bool(extensions & {".xlsx", ".xlsm", ".xls"})
-            has_csv = ".csv" in extensions
-            all_excel = has_excel and not has_csv and len(self.file_paths) > 1
-            if has_excel and has_csv or all_excel:
-                sheet_names = [ALL_SHEETS]
-                self.workbook = {}
+            if not self.file_paths:
+                self.file_paths = [file_path]
+            self.file_path = self.file_paths[0]
+            input_tables = []
+            workbook_tables = {}
+            for source_path in self.file_paths:
+                for sheet_name, table in _iter_input_tables(source_path, ALL_SHEETS):
+                    source_label = f"{os.path.basename(source_path)} - {sheet_name}"
+                    input_tables.append((source_label, table))
+                    if len(self.file_paths) == 1:
+                        workbook_tables[sheet_name] = table
+
+            self.input_tables = input_tables
+            self.workbook = workbook_tables
+            if len(self.file_paths) > 1:
+                self.sheet_options = {"All sheets": ALL_SHEETS}
+                default_label = "All sheets"
             elif os.path.splitext(file_path)[1].lower() == ".csv":
-                sheet_names = ["CSV file"]
-                self.workbook = {sheet_names[0]: _read_input_file(file_path)}
+                self.sheet_options = {"CSV file": "CSV file"}
+                default_label = "CSV file"
             else:
-                engine = _select_excel_engine(file_path)
-                with pd.ExcelFile(file_path, engine=engine) as workbook:
-                    workbook_sheet_names = workbook.sheet_names
-                    sheet_names = [ALL_SHEETS, *workbook_sheet_names]
-                    self.workbook = {
-                        name: pd.read_excel(file_path, sheet_name=name, engine=engine)
-                        for name in workbook_sheet_names
-                    }
-            self.selected_sheet_name = None
-            self.headers = []
-            self.groups = {}
-            self.sheet_dropdown.configure(values=sheet_names)
-            default_sheet = ALL_SHEETS if has_excel and has_csv or all_excel else ("CSV file" if os.path.splitext(file_path)[1].lower() == ".csv" else (workbook_sheet_names[0] if workbook_sheet_names else ""))
-            self.sheet_var.set(default_sheet)
-            for _frame, variable, _dropdown, _remove in self.group_column_controls:
-                variable.set("")
-            self._clear_group_list()
-            if default_sheet:
-                self.on_sheet_selected(default_sheet)
-            self.progress_var.set("Workbook loaded successfully.")
+                all_sheets_label = "All sheets"
+                while all_sheets_label in workbook_tables:
+                    all_sheets_label += " (combined)"
+                self.sheet_options = {all_sheets_label: ALL_SHEETS}
+                self.sheet_options.update({name: name for name in workbook_tables})
+                default_label = all_sheets_label if len(workbook_tables) > 1 else next(iter(workbook_tables), all_sheets_label)
+
+            self.sheet_dropdown.configure(values=list(self.sheet_options))
+            self.sheet_var.set(default_label)
+            self.on_sheet_selected(default_label)
         except Exception as exc:
             messagebox.showerror("Unable to load workbook", f"{exc}")
             self.progress_var.set("Failed to load workbook.")
+            self.workbook = {}
+            self.input_tables = []
+            self.sheet_options = {}
+            self.sheet_var.set("")
             self.sheet_dropdown.configure(values=[])
-            for _frame, _variable, dropdown, _remove in self.group_column_controls:
-                dropdown.configure(values=[])
+            self._clear_worksheet_selection()
+
+    def _clear_worksheet_selection(self):
+        self.selected_sheet_name = None
+        self.headers = []
+        self.groups = {}
+        for _frame, variable, dropdown, _remove in self.group_column_controls:
+            variable.set("")
+            dropdown.configure(values=["Select a column"])
+        self._clear_group_list()
 
     def on_sheet_selected(self, sheet_name):
         if not sheet_name or not self.file_paths:
-            return
+            return False
 
-        self.selected_sheet_name = sheet_name
+        self.selected_sheet_name = self.sheet_options.get(sheet_name, sheet_name)
         try:
-            if sheet_name == ALL_SHEETS:
-                tables = self._selected_tables()
-                if not tables:
-                    raise WorkbookProcessingError("The selected workbook does not contain any data.")
-                sheet = pd.concat(tables, ignore_index=True)
-            else:
-                sheet = self.workbook[sheet_name]
-            if sheet.empty:
+            tables = self._selected_tables()
+            if not tables:
                 raise WorkbookProcessingError("The selected worksheet does not contain any data.")
 
-            headers = list(sheet.columns)
-            self.headers = ["" if value is None else str(value).strip() for value in headers]
+            _tables, self.headers = _normalize_input_tables(tables)
+            if not self.headers:
+                raise WorkbookProcessingError("The selected worksheet does not contain any data.")
             for _frame, _variable, dropdown, _remove in self.group_column_controls:
                 dropdown.configure(values=self.headers)
 
@@ -341,33 +352,27 @@ class ExcelSplitterApp(ctk.CTk):
             for index, (_frame, variable, _dropdown, _remove) in enumerate(self.group_column_controls):
                 variable.set(first_column if index == 0 else "")
 
-            self._populate_groups(sheet)
+            return self._populate_groups()
         except Exception as exc:
             messagebox.showerror("Unable to process worksheet", str(exc))
-            self._clear_group_list()
+            self._clear_worksheet_selection()
+            self.sheet_var.set("")
             self.progress_var.set("Worksheet could not be processed.")
+            return False
 
     def on_column_selection_changed(self, _event=None):
         if not self.file_paths or not self.selected_sheet_name:
             return
-        if self.selected_sheet_name == ALL_SHEETS:
-            tables = self._selected_tables()
-            if not tables:
-                return
-            sheet = pd.concat(tables, ignore_index=True)
-        else:
-            sheet = self.workbook[self.selected_sheet_name]
-        self._populate_groups(sheet)
+        self._populate_groups()
 
     def _selected_tables(self):
-        input_tables = []
-        for file_path in self.file_paths:
-            for source_sheet_name, table in _iter_input_tables(file_path, self.selected_sheet_name):
-                if table.empty:
-                    continue
-                input_tables.append((f"{os.path.basename(file_path)} - {source_sheet_name}", table))
-        normalized_tables, _headers = _normalize_input_tables(input_tables)
-        return [table for _source_name, table in normalized_tables]
+        if self.selected_sheet_name == ALL_SHEETS:
+            return [(source_name, table) for source_name, table in self.input_tables if not table.empty]
+        table = self.workbook[self.selected_sheet_name]
+        if table.empty:
+            return []
+        source_label = f"{os.path.basename(self.file_paths[0])} - {self.selected_sheet_name}"
+        return [(source_label, table)]
 
     def _selected_sort_mode(self):
         return {
@@ -413,46 +418,34 @@ class ExcelSplitterApp(ctk.CTk):
             cb.grid(sticky="w", padx=16, pady=6)
             self.group_checkboxes[group_key] = cb
 
-    def _populate_groups(self, sheet):
+    def _populate_groups(self):
         self._clear_group_list()
+        self.groups = {}
         if not self.headers:
-            return
+            return False
 
         try:
             grouping_columns = self._selected_group_columns()
             if not grouping_columns:
-                self.groups = {}
                 ctk.CTkLabel(self.groups_frame, text="Please select at least one grouping column.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
-                return
+                return False
 
-            if self.selected_sheet_name == ALL_SHEETS:
-                tables = self._selected_tables()
-                if not tables:
-                    raise WorkbookProcessingError("No data was found in the selected worksheets.")
-                groups = OrderedDict()
-                for source_sheet in tables:
-                    _, source_groups = build_group_map(source_sheet, grouping_columns[0], grouping_columns=grouping_columns)
-                    for group_key, rows in source_groups.items():
-                        groups.setdefault(group_key, []).extend(rows)
-            elif len(self.file_paths) == 1:
-                headers, groups = build_group_map(sheet, grouping_columns[0], grouping_columns=grouping_columns)
-            else:
-                groups = OrderedDict()
-                for file_path in self.file_paths:
-                    engine = _select_excel_engine(file_path)
-                    source_sheet = _read_input_file(file_path, self.selected_sheet_name)
-                    _, source_groups = build_group_map(source_sheet, grouping_columns[0], grouping_columns=grouping_columns)
-                    for group_key, rows in source_groups.items():
-                        groups.setdefault(group_key, []).extend(rows)
-            self.groups = groups
-            if not groups:
-                self._render_groups()
-                return
+            _headers, self.groups = build_combined_group_map(
+                self._selected_tables(),
+                grouping_columns[0],
+                grouping_columns=grouping_columns,
+                combine_duplicates=self.combine_duplicates_var.get(),
+            )
             self._render_groups()
+            record_count = sum(len(rows) for rows in self.groups.values())
+            self.progress_var.set(f"{len(self.groups)} groups detected from {record_count:,} records.")
+            return True
         except Exception as exc:
             self.groups = {}
             self.group_checkboxes = {}
             ctk.CTkLabel(self.groups_frame, text=f"Unable to detect groups: {exc}", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
+            self.progress_var.set("Worksheet could not be processed.")
+            return False
 
     def start_generation(self):
         if not self.file_paths:

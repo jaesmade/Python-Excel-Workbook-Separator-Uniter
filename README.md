@@ -1,17 +1,20 @@
-# Excel Column Splitter
+# Excel Department & Employment Status Splitter
 
 This application lets you select an Excel workbook, choose a worksheet, select one or more grouping columns, review detected groups, and generate a new workbook with one worksheet per unique grouping combination.
 
 ## Features
 
 - Browse for Excel workbooks (.xlsx, .xlsm, .xls) or CSV files (.csv)
-- View available worksheets or choose `All sheets`; CSV files are treated as a single worksheet
+- Multi-sheet workbooks open with `All sheets` selected; choose an individual worksheet when needed
+- Combine all worksheets across multiple uploaded workbooks; CSV files are treated as a single worksheet
 - Select one grouping column by default and add more grouping columns as needed
 - Preview all detected groups for the selected column combination
 - Sort detected groups alphabetically or by record count
 - Uncheck groups you do not want to generate
+- Merge matching groups across worksheets, or turn off `Combine duplicate groups` to preview and export each source separately
 - Sanitize sheet names for Excel restrictions
 - Preserve source rows and headers in each generated sheet
+- Format generated sheets like the FULL DATAS attendance tables: dark blue headers, white bold text, Arial 11, alternating blue rows, fitted column widths, and frozen headers and leading columns
 - Generate the workbook first, then choose the output location in a Save As dialog
 
 ## Install dependencies
@@ -59,6 +62,10 @@ Each unique combination becomes a separate worksheet with the original headers a
 
 CSV files are read as single-sheet tabular data and are exported to an Excel workbook using the same grouping process. Excel and CSV files can be uploaded together; Excel worksheets and CSV files are all combined when `All sheets` is selected.
 
-Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. Different files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and files are skipped.
+Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. This is the default for workbooks containing multiple worksheets and for multiple uploaded files. Different worksheets and files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and blank rows are skipped.
+
+With `Combine duplicate groups` enabled, matching groups from different worksheets or files are merged. Disable it to keep each source worksheet's groups separate. The preview includes the source workbook and worksheet names, and selected preview groups are used for export. Loaded worksheets are cached so changing grouping columns does not reread the source files.
 
 Detected groups can be sorted alphabetically, by record count ascending, or by record count descending. The selected order is also used for the generated worksheets.
+
+Generated `.xlsx` worksheets include filterable Excel tables using `TableStyleMedium2`, 31-point header rows, and 23-point data rows. Known attendance columns use widths matched by header name, so reordered columns keep the appropriate width. Other columns fit their contents up to a readable maximum. Legacy `.xls` exports use equivalent cell colors, fonts, row heights, and frozen panes.
