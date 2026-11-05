@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from collections import OrderedDict
 from typing import Callable
 
@@ -9,6 +10,7 @@ import xlwt
 from openpyxl import Workbook
 
 from .utils import detect_header_names, normalize_group_value, sanitize_sheet_name
+from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_worksheet, legacy_styles
 
 
 class WorkbookProcessingError(ValueError):
@@ -43,7 +45,8 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".csv":
         return pd.read_csv(file_path)
-    return pd.read_excel(file_path, sheet_name=sheet_name, engine=_select_excel_engine(file_path))
+    return pd.read_excel(file_path, sheet_name=0 if sheet_name is None else sheet_name,
+                         engine=_select_excel_engine(file_path))
 
 
 def _iter_input_tables(file_path: str, sheet_name: str | None):
@@ -53,9 +56,22 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
 
     engine = _select_excel_engine(file_path)
     with pd.ExcelFile(file_path, engine=engine) as workbook:
-        selected_sheets = workbook.sheet_names if sheet_name == ALL_SHEETS else [sheet_name]
+        selected_sheets = workbook.sheet_names if sheet_name == ALL_SHEETS else [
+            workbook.sheet_names[0] if sheet_name is None else sheet_name
+        ]
         for source_sheet_name in selected_sheets:
-            yield source_sheet_name, pd.read_excel(file_path, sheet_name=source_sheet_name, engine=engine)
+            if source_sheet_name not in workbook.sheet_names:
+                raise WorkbookProcessingError(
+                    f"Worksheet '{source_sheet_name}' was not found in '{os.path.basename(file_path)}'."
+                )
+            yield source_sheet_name, workbook.parse(sheet_name=source_sheet_name)
+
+
+def _row_has_values(row) -> bool:
+    return any(
+        cell is not None and not pd.isna(cell) and str(cell).strip() != ""
+        for cell in row
+    )
 
 
 def _normalize_input_tables(input_tables):
@@ -64,6 +80,8 @@ def _normalize_input_tables(input_tables):
     seen_headers: set[str] = set()
 
     for source_name, table in input_tables:
+        if not any(_row_has_values(row) for row in table.itertuples(index=False, name=None)):
+            continue
         normalized_table = table.copy()
         normalized_headers = detect_header_names(normalized_table.columns)
         if len(normalized_headers) != len(set(normalized_headers)):
@@ -152,8 +170,11 @@ def build_group_map(
 
     groups = OrderedDict()
 
-    for row in list(_iter_sheet_rows(sheet))[1:] if not isinstance(sheet, pd.DataFrame) else list(_iter_sheet_rows(sheet)):
-        if not row or all((cell is None or pd.isna(cell) or str(cell).strip() == "") for cell in row):
+    rows = iter(_iter_sheet_rows(sheet))
+    if not isinstance(sheet, pd.DataFrame):
+        next(rows, None)
+    for row in rows:
+        if not _row_has_values(row):
             continue
 
         group_key = tuple(
@@ -174,8 +195,29 @@ def build_group_map(
     return headers, groups
 
 
+def build_combined_group_map(
+    input_tables,
+    department_column: str,
+    id_number_column: str | None = None,
+    grouping_columns: list[str] | None = None,
+    combine_duplicates: bool = True,
+):
+    """Build the same source-aware groups for the preview and workbook export."""
+    normalized_tables, headers = _normalize_input_tables(input_tables)
+    combined_groups = OrderedDict()
+    for source_label, table in normalized_tables:
+        _, groups = build_group_map(table, department_column, id_number_column, grouping_columns)
+        for group_key, rows in groups.items():
+            output_key = group_key if combine_duplicates else (*group_key, source_label)
+            combined_groups.setdefault(output_key, []).extend(rows)
+
+    if not combined_groups:
+        raise WorkbookProcessingError("No valid rows were found across the selected worksheets and files.")
+    return headers, combined_groups
+
+
 def split_workbook(file_path: str, sheet_name: str, department_column: str, id_number_column: str | None,
-                   output_file: str, selected_groups: set[tuple[str, str]] | None = None,
+                   output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                    progress_callback: Callable[[int, str], None] | None = None,
            combine_duplicates: bool = True,
            grouping_columns: list[str] | None = None,
@@ -185,7 +227,7 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
 
 
 def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str | None,
-                    output_file: str, selected_groups: set[tuple[str, str]] | None = None,
+                    output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                     progress_callback: Callable[[int, str], None] | None = None,
                     combine_duplicates: bool = True,
                     grouping_columns: list[str] | None = None,
@@ -193,7 +235,6 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     if not file_paths:
         raise WorkbookProcessingError("No files were selected for processing.")
 
-    combined_groups: OrderedDict[tuple[str, ...], list[tuple]] = OrderedDict()
     total_files = len(file_paths)
     input_tables = []
 
@@ -206,54 +247,54 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
         if progress_callback:
             progress_callback(int((file_index / total_files) * 40), f"Reading: {os.path.basename(file_path)}")
 
-    normalized_tables, combined_headers = _normalize_input_tables(input_tables)
-    for source_label, source_df in normalized_tables:
-        _, groups = build_group_map(source_df, department_column, id_number_column, grouping_columns)
-        for group_key, rows in groups.items():
-            if combine_duplicates:
-                combined_groups.setdefault(group_key, []).extend(rows)
-            else:
-                unique_key = (*group_key, source_label)
-                combined_groups.setdefault(unique_key, []).extend(rows)
-
-    if not combined_groups:
-        raise WorkbookProcessingError("No valid rows were found across the selected files.")
+    combined_headers, combined_groups = build_combined_group_map(
+        input_tables, department_column, id_number_column, grouping_columns, combine_duplicates
+    )
 
     if selected_groups is None:
         selected_groups = set(combined_groups.keys())
 
     if not selected_groups:
         raise WorkbookProcessingError("No groups were selected to generate worksheets.")
+    if not selected_groups.issubset(combined_groups):
+        raise WorkbookProcessingError("The selected groups have changed. Refresh the group preview and try again.")
 
     output_ext = os.path.splitext(output_file)[1].lower()
     used_names: set[str] = set()
     processed_rows = 0
-    ordered_groups = sort_group_items(combined_groups, sort_mode)
+    ordered_groups = [
+        (group_key, rows) for group_key, rows in sort_group_items(combined_groups, sort_mode)
+        if group_key in selected_groups
+    ]
     total_groups = len(ordered_groups)
 
     if output_ext == ".xls":
         workbook = xlwt.Workbook()
+        styles = legacy_styles(workbook)
         for index, (group_key, rows) in enumerate(ordered_groups, start=1):
-            if group_key not in selected_groups:
-                continue
-
             display_name = " - ".join(group_key)
             sheet_title = sanitize_sheet_name(display_name, used_names)
             sheet = workbook.add_sheet(sheet_title[:31])
+            format_legacy_dimensions(sheet, combined_headers, rows)
             for col_num, header in enumerate(combined_headers or []):
-                sheet.write(0, col_num, header)
+                sheet.write(0, col_num, header, styles["header"])
             for row_num, row_values in enumerate(rows, start=1):
+                sheet.row(row_num).height = 23 * 20
+                sheet.row(row_num).height_mismatch = True
                 for col_num, value in enumerate(row_values):
+                    style = styles[(row_num % 2 == 0,
+                                    combined_headers[col_num].casefold() in CENTERED_COLUMNS,
+                                    isinstance(value, date))]
                     if pd.isna(value):
-                        sheet.write(row_num, col_num, "")
+                        sheet.write(row_num, col_num, "", style)
                     else:
-                        sheet.write(row_num, col_num, value)
+                        sheet.write(row_num, col_num, value, style)
                 processed_rows += 1
 
             if progress_callback:
                 progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
-            workbook.save(output_file)
+        workbook.save(output_file)
         return {
             "created_sheets": len(selected_groups),
             "processed_rows": processed_rows,
@@ -265,9 +306,6 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     output_wb.remove(default_sheet)
 
     for index, (group_key, rows) in enumerate(ordered_groups, start=1):
-        if group_key not in selected_groups:
-            continue
-
         display_name = " - ".join(group_key)
         sheet_title = sanitize_sheet_name(display_name, used_names)
         target_sheet = output_wb.create_sheet(title=sheet_title)
@@ -283,10 +321,11 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
                     target_sheet.cell(row=row_num, column=col_num, value=value)
             processed_rows += 1
 
+        format_worksheet(target_sheet, index)
         if progress_callback:
             progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
-        output_wb.save(output_file)
+    output_wb.save(output_file)
     return {
         "created_sheets": len(output_wb.worksheets),
         "processed_rows": processed_rows,
