@@ -43,10 +43,10 @@ python -m pip install pyinstaller
 Create the executable:
 
 ```bash
-pyinstaller --onefile --windowed main.py
+python -m PyInstaller --clean main.spec
 ```
 
-The executable will be generated in the `dist` folder.
+The executable will be generated as `dist/Excel Arranger.exe`, with the app icon embedded and included for its window.
 
 ## Grouping logic
 

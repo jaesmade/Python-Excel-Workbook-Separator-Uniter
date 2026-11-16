@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import queue
 import shutil
+import sys
 import tempfile
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
@@ -31,6 +33,8 @@ class ExcelSplitterApp(ctk.CTk):
     def __init__(self):
         super().__init__(fg_color="#F9F6EF")
         self.title("Excel Splitter & Merger")
+        if sys.platform.startswith("win"):
+            self.iconbitmap(str(Path(__file__).resolve().parents[1] / "assets" / "app.ico"))
         self.geometry("930x780")
         self.minsize(860, 680)
 
