@@ -6,6 +6,36 @@ from typing import Iterable
 INVALID_SHEET_CHARS = set(':/?*[]\\')
 
 
+class SheetNameRegistry:
+    """Track case-insensitive names and the next suffix for each base name."""
+
+    def __init__(self):
+        self._names: set[str] = set()
+        self._next_suffix: dict[tuple[str, ...], int] = {}
+
+    def allocate(self, candidate: str) -> str:
+        name = candidate
+        if name.casefold() in self._names:
+            # Unicode casefolding can expand characters, so candidates that
+            # casefold equally may truncate differently when a suffix is added.
+            # Share counters only when every possible suffix width produces the
+            # same case-insensitive prefix.
+            key = (candidate.casefold(),) + tuple(
+                candidate[:28 - digits].rstrip(" -_").casefold()
+                for digits in range(1, 29)
+            )
+            counter = self._next_suffix.get(key, 2)
+            while True:
+                suffix = f" - {counter}"
+                name = candidate[:31 - len(suffix)].rstrip(" -_") + suffix
+                counter += 1
+                if name.casefold() not in self._names:
+                    break
+            self._next_suffix[key] = counter
+        self._names.add(name.casefold())
+        return name
+
+
 def normalize_group_value(value, default_label: str) -> str:
     if value is None:
         return default_label
@@ -15,7 +45,7 @@ def normalize_group_value(value, default_label: str) -> str:
     return str(value).strip() or default_label
 
 
-def sanitize_sheet_name(name: str, used_names: set[str]) -> str:
+def sanitize_sheet_name(name: str, used_names: set[str] | SheetNameRegistry) -> str:
     cleaned = "".join("-" if char in INVALID_SHEET_CHARS else char for char in str(name or "GROUP"))
     cleaned = cleaned.strip().strip(".")
     if not cleaned:
@@ -26,6 +56,8 @@ def sanitize_sheet_name(name: str, used_names: set[str]) -> str:
         base_name = "GROUP"
 
     candidate = base_name.strip()
+    if isinstance(used_names, SheetNameRegistry):
+        return used_names.allocate(candidate)
     counter = 2
     final_name = candidate
     while final_name.casefold() in {name.casefold() for name in used_names}:
