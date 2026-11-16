@@ -11,6 +11,7 @@ This application lets you select an Excel workbook, choose a worksheet, select o
 - Preview all detected groups for the selected column combination
 - Preview selected output worksheets by name and inspect their table rows before generating the workbook
 - Sort detected groups alphabetically or by record count
+- Browse detected groups in pages, keeping selections when changing pages or sort order
 - Uncheck groups you do not want to generate
 - Merge matching groups across worksheets, or turn off `Combine duplicate groups` to preview and export each source separately
 - Sanitize sheet names for Excel restrictions
@@ -63,9 +64,11 @@ Each unique combination becomes a separate worksheet with the original headers a
 
 CSV files are read as single-sheet tabular data and are exported to an Excel workbook using the same grouping process. Excel and CSV files can be uploaded together; Excel worksheets and CSV files are all combined when `All sheets` is selected.
 
+CSV values are imported as text so identifiers with leading zeros and values such as `NA` are preserved. Excel cells retain their stored value types. Duplicate column headers are rejected, and text beginning with `=` is written as text.
+
 Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. This is the default for workbooks containing multiple worksheets and for multiple uploaded files. Different worksheets and files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and blank rows are skipped.
 
-With `Combine duplicate groups` enabled, matching groups from different worksheets or files are merged. Disable it to keep each source worksheet's groups separate. The preview includes the source workbook and worksheet names, and selected preview groups are used for export. Loaded worksheets are cached so changing grouping columns does not reread the source files.
+With `Combine duplicate groups` enabled, matching groups from different worksheets or files are merged. Disable it to keep each source worksheet's groups separate. The preview includes the source workbook and worksheet names, and selected preview groups are used for export. Loaded worksheets are cached for both preview and export; reload a file to pick up changes made after it was opened.
 
 Detected groups can be sorted alphabetically, by record count ascending, or by record count descending. The selected order is also used for the generated worksheets.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import shutil
 import tempfile
 import threading
@@ -21,7 +22,8 @@ from excel_splitter.core import (
     build_combined_group_map,
     preview_group_items,
     sort_group_items,
-    split_workbooks,
+    split_input_tables,
+    source_file_labels,
 )
 
 
@@ -43,6 +45,8 @@ class ExcelSplitterApp(ctk.CTk):
         self.headers = []
         self.groups = {}
         self.group_checkboxes = {}
+        self.selected_group_keys = set()
+        self.group_page = 0
         self.group_column_controls = []
 
         self._build_ui()
@@ -142,7 +146,7 @@ class ExcelSplitterApp(ctk.CTk):
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
-        body.grid_rowconfigure(0, weight=1)
+        body.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(body, text="Detected Groups", text_color=text, font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=(18, 8), pady=(18, 10), sticky="w")
         self.group_sort_var = ctk.StringVar(value="Alphabetical")
@@ -165,6 +169,17 @@ class ExcelSplitterApp(ctk.CTk):
         self.groups_frame = ctk.CTkScrollableFrame(body, corner_radius=12, fg_color=ivory)
         self.groups_frame.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
         self.groups_frame.grid_columnconfigure(0, weight=1)
+
+        group_pages = ctk.CTkFrame(body, fg_color="transparent")
+        group_pages.grid(row=2, column=0, columnspan=2, padx=18, pady=(0, 16), sticky="w")
+        self.group_previous = ctk.CTkButton(group_pages, text="Previous", width=90, command=lambda: self._change_group_page(-1))
+        self.group_previous.pack(side="left")
+        self.group_previous.configure(state="disabled")
+        self.group_page_var = ctk.StringVar(value="")
+        ctk.CTkLabel(group_pages, textvariable=self.group_page_var).pack(side="left", padx=12)
+        self.group_next = ctk.CTkButton(group_pages, text="Next", width=90, command=lambda: self._change_group_page(1))
+        self.group_next.pack(side="left")
+        self.group_next.configure(state="disabled")
 
         bottom = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
         bottom.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
@@ -200,7 +215,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.generate_btn.grid(row=3, column=0, padx=18, pady=(0, 18), sticky="ew")
 
     def preview_worksheets(self):
-        selected_groups = {key for key, checkbox in self.group_checkboxes.items() if checkbox.get()}
+        selected_groups = set(self.selected_group_keys)
         if not selected_groups:
             messagebox.showinfo("Preview worksheets", "Select at least one detected group to preview.")
             return
@@ -364,8 +379,9 @@ class ExcelSplitterApp(ctk.CTk):
             self.file_var.set(f"{len(self.file_paths)} files selected: {names}")
         self.load_workbook(self.file_path)
 
-    def choose_output_location(self):
-        source_file = self.file_paths[0] if self.file_paths else ""
+    def choose_output_location(self, source_file=None):
+        if source_file is None:
+            source_file = self.file_paths[0] if self.file_paths else ""
         source_stem = os.path.splitext(os.path.basename(source_file))[0]
         initial_name = f"{source_stem} - SPLIT.xlsx" if source_stem else "Separated_Workbook.xlsx"
         path = filedialog.asksaveasfilename(
@@ -395,9 +411,9 @@ class ExcelSplitterApp(ctk.CTk):
             self.file_path = self.file_paths[0]
             input_tables = []
             workbook_tables = {}
-            for source_path in self.file_paths:
+            for source_path, file_label in zip(self.file_paths, source_file_labels(self.file_paths)):
                 for sheet_name, table in _iter_input_tables(source_path, ALL_SHEETS):
-                    source_label = f"{os.path.basename(source_path)} - {sheet_name}"
+                    source_label = f"{file_label} - {sheet_name}"
                     input_tables.append((source_label, table))
                     if len(self.file_paths) == 1:
                         workbook_tables[sheet_name] = table
@@ -435,6 +451,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.selected_sheet_name = None
         self.headers = []
         self.groups = {}
+        self.selected_group_keys = set()
         for _frame, variable, dropdown, _remove in self.group_column_controls:
             variable.set("")
             dropdown.configure(values=["Select a column"])
@@ -480,7 +497,7 @@ class ExcelSplitterApp(ctk.CTk):
         table = self.workbook[self.selected_sheet_name]
         if table.empty:
             return []
-        source_label = f"{os.path.basename(self.file_paths[0])} - {self.selected_sheet_name}"
+        source_label = f"{source_file_labels(self.file_paths)[0]} - {self.selected_sheet_name}"
         return [(source_label, table)]
 
     def _selected_sort_mode(self):
@@ -491,13 +508,26 @@ class ExcelSplitterApp(ctk.CTk):
         }[self.group_sort_var.get()]
 
     def _on_group_sort_changed(self, _value=None):
-        selected_groups = {key for key, checkbox in self.group_checkboxes.items() if checkbox.get()}
-        self._render_groups(selected_groups)
+        self.group_page = 0
+        self._render_groups(self.selected_group_keys)
+
+    def _change_group_page(self, delta):
+        self.group_page += delta
+        self._render_groups(self.selected_group_keys)
+
+    def _set_group_selected(self, group_key):
+        if self.group_checkboxes[group_key].get():
+            self.selected_group_keys.add(group_key)
+        else:
+            self.selected_group_keys.discard(group_key)
 
     def _clear_group_list(self):
         for widget in self.groups_frame.winfo_children():
             widget.destroy()
         self.group_checkboxes = {}
+        self.group_page_var.set("")
+        self.group_previous.configure(state="disabled")
+        self.group_next.configure(state="disabled")
 
     def _render_groups(self, selected_groups=None):
         self._clear_group_list()
@@ -507,10 +537,19 @@ class ExcelSplitterApp(ctk.CTk):
 
         if selected_groups is None:
             selected_groups = set(self.groups)
+        self.selected_group_keys = set(selected_groups)
+
+        ordered_groups = sort_group_items(self.groups, self._selected_sort_mode())
+        page_size = 50
+        page_count = max(1, (len(ordered_groups) + page_size - 1) // page_size)
+        self.group_page = max(0, min(self.group_page, page_count - 1))
+        self.group_page_var.set(f"Page {self.group_page + 1} of {page_count}  ·  {len(self.groups):,} groups")
+        self.group_previous.configure(state="normal" if self.group_page else "disabled")
+        self.group_next.configure(state="normal" if self.group_page + 1 < page_count else "disabled")
 
         teal = "#12454B"
         teal_dark = "#0C3035"
-        for group_key, rows in sort_group_items(self.groups, self._selected_sort_mode()):
+        for group_key, rows in ordered_groups[self.group_page * page_size:(self.group_page + 1) * page_size]:
             label = " - ".join(group_key)
             cb = ctk.CTkCheckBox(
                 self.groups_frame,
@@ -521,6 +560,7 @@ class ExcelSplitterApp(ctk.CTk):
                 fg_color=teal,
                 hover_color=teal_dark,
                 border_color=teal,
+                command=lambda key=group_key: self._set_group_selected(key),
             )
             if group_key in selected_groups:
                 cb.select()
@@ -530,6 +570,7 @@ class ExcelSplitterApp(ctk.CTk):
     def _populate_groups(self):
         self._clear_group_list()
         self.groups = {}
+        self.selected_group_keys = set()
         if not self.headers:
             return False
 
@@ -545,6 +586,7 @@ class ExcelSplitterApp(ctk.CTk):
                 grouping_columns=grouping_columns,
                 combine_duplicates=self.combine_duplicates_var.get(),
             )
+            self.group_page = 0
             self._render_groups()
             record_count = sum(len(rows) for rows in self.groups.values())
             self.progress_var.set(f"{len(self.groups)} groups detected from {record_count:,} records.")
@@ -567,7 +609,7 @@ class ExcelSplitterApp(ctk.CTk):
         if not grouping_columns:
             messagebox.showerror("Missing grouping column", "Please select at least one grouping column.")
             return
-        selected_groups = {key for key, cb in self.group_checkboxes.items() if cb.get()}
+        selected_groups = set(self.selected_group_keys)
         if not selected_groups:
             messagebox.showerror("No groups selected", "Please choose at least one group to generate.")
             return
@@ -577,51 +619,69 @@ class ExcelSplitterApp(ctk.CTk):
         self.progress_bar.set(0)
         self.update_idletasks()
 
+        input_tables = self._selected_tables()
+        source_file = self.file_paths[0]
+        combine_duplicates = self.combine_duplicates_var.get()
+        updates = queue.Queue()
         thread = threading.Thread(
             target=self._generate_workbook,
-            args=(selected_groups, self._selected_sort_mode()),
+            args=(input_tables, tuple(grouping_columns), selected_groups,
+                  combine_duplicates, self._selected_sort_mode(), source_file, updates),
             daemon=True,
         )
         thread.start()
+        self.after(50, self._poll_generation, updates)
 
-    def _generate_workbook(self, selected_groups, sort_mode):
+    def _generate_workbook(self, input_tables, grouping_columns, selected_groups, combine_duplicates, sort_mode, source_file, updates):
         temporary_path = None
         try:
-            grouping_columns = self._selected_group_columns()
             temporary_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
             temporary_path = temporary_file.name
             temporary_file.close()
 
             def progress_update(percent, message):
-                self.progress_var.set(message)
-                self.progress_bar.set(percent / 100)
-                self.update_idletasks()
+                updates.put(("progress", percent, message))
 
-            result = split_workbooks(
-                self.file_paths,
-                self.selected_sheet_name,
+            result = split_input_tables(
+                input_tables,
                 grouping_columns[0],
                 grouping_columns[1] if len(grouping_columns) > 1 else None,
                 temporary_path,
                 selected_groups,
                 progress_callback=progress_update,
-                combine_duplicates=self.combine_duplicates_var.get(),
+                combine_duplicates=combine_duplicates,
                 grouping_columns=grouping_columns,
                 sort_mode=sort_mode,
             )
 
             created = result.get("created_sheets", 0)
             processed = result.get("processed_rows", 0)
-            self.after(0, self._save_completed_workbook, temporary_path, created, processed)
+            updates.put(("complete", temporary_path, created, processed, source_file))
             temporary_path = None
         except Exception as exc:
             if temporary_path and os.path.exists(temporary_path):
                 os.remove(temporary_path)
-            self.after(0, self._generation_failed, exc)
+            updates.put(("error", exc))
 
-    def _save_completed_workbook(self, temporary_path, created, processed):
+    def _poll_generation(self, updates):
         try:
-            output_path = self.choose_output_location()
+            while True:
+                message = updates.get_nowait()
+                if message[0] == "progress":
+                    self.progress_var.set(message[2])
+                    self.progress_bar.set(message[1] / 100)
+                elif message[0] == "complete":
+                    self._save_completed_workbook(*message[1:])
+                    return
+                else:
+                    self._generation_failed(message[1])
+                    return
+        except queue.Empty:
+            self.after(50, self._poll_generation, updates)
+
+    def _save_completed_workbook(self, temporary_path, created, processed, source_file):
+        try:
+            output_path = self.choose_output_location(source_file)
             if not output_path:
                 self.progress_var.set("Workbook generated but not saved.")
                 self.progress_bar.set(0)
