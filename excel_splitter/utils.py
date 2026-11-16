@@ -28,7 +28,7 @@ def sanitize_sheet_name(name: str, used_names: set[str]) -> str:
     candidate = base_name.strip()
     counter = 2
     final_name = candidate
-    while final_name in used_names:
+    while final_name.casefold() in {name.casefold() for name in used_names}:
         suffix = f" - {counter}"
         max_length = 31 - len(suffix)
         final_name = candidate[:max_length].rstrip(" -_") + suffix

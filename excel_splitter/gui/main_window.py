@@ -4,9 +4,11 @@ import os
 import shutil
 import tempfile
 import threading
-from tkinter import filedialog, messagebox
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
+import pandas as pd
 
 from excel_splitter.core import (
     ALL_SHEETS,
@@ -17,6 +19,7 @@ from excel_splitter.core import (
     _iter_input_tables,
     _normalize_input_tables,
     build_combined_group_map,
+    preview_group_items,
     sort_group_items,
     split_workbooks,
 )
@@ -185,7 +188,113 @@ class ExcelSplitterApp(ctk.CTk):
             text_color=ivory,
             border_color=teal,
         )
-        self.generate_btn.grid(row=2, column=0, padx=18, pady=(0, 18), sticky="ew")
+        ctk.CTkButton(
+            bottom,
+            text="Preview Worksheets",
+            command=self.preview_worksheets,
+            height=38,
+            fg_color=ivory_alt,
+            hover_color=line,
+            text_color=text,
+        ).grid(row=2, column=0, padx=18, pady=(0, 8), sticky="ew")
+        self.generate_btn.grid(row=3, column=0, padx=18, pady=(0, 18), sticky="ew")
+
+    def preview_worksheets(self):
+        selected_groups = {key for key, checkbox in self.group_checkboxes.items() if checkbox.get()}
+        if not selected_groups:
+            messagebox.showinfo("Preview worksheets", "Select at least one detected group to preview.")
+            return
+
+        items = preview_group_items(self.groups, selected_groups, self._selected_sort_mode())
+        if not items:
+            messagebox.showinfo("Preview worksheets", "There are no selected worksheets to preview.")
+            return
+
+        window = ctk.CTkToplevel(self)
+        window.title("Preview Worksheets")
+        window.geometry("1000x600")
+        window.minsize(650, 400)
+        window.transient(self)
+        window.grab_set()
+        window.grid_columnconfigure(1, weight=1)
+        window.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(window, text="Worksheets", font=ctk.CTkFont(size=15, weight="bold")).grid(
+            row=0, column=0, padx=16, pady=(16, 8), sticky="w"
+        )
+        title_var = ctk.StringVar(value="")
+        ctk.CTkLabel(window, textvariable=title_var, font=ctk.CTkFont(size=15, weight="bold")).grid(
+            row=0, column=1, padx=16, pady=(16, 8), sticky="w"
+        )
+
+        sheet_frame = ctk.CTkFrame(window, fg_color="transparent")
+        sheet_frame.grid(row=1, column=0, padx=(16, 8), pady=(0, 12), sticky="ns")
+        sheet_frame.grid_rowconfigure(0, weight=1)
+        sheet_list = tk.Listbox(sheet_frame, width=26, exportselection=False, activestyle="none")
+        sheet_list.grid(row=0, column=0, sticky="nsew")
+        sheet_scroll = ttk.Scrollbar(sheet_frame, orient="vertical", command=sheet_list.yview)
+        sheet_scroll.grid(row=0, column=1, sticky="ns")
+        sheet_horizontal = ttk.Scrollbar(sheet_frame, orient="horizontal", command=sheet_list.xview)
+        sheet_horizontal.grid(row=1, column=0, sticky="ew")
+        sheet_list.configure(yscrollcommand=sheet_scroll.set, xscrollcommand=sheet_horizontal.set)
+        for name, _key, _rows in items:
+            sheet_list.insert("end", name)
+
+        table_frame = ctk.CTkFrame(window, fg_color="transparent")
+        table_frame.grid(row=1, column=1, padx=(8, 16), pady=(0, 12), sticky="nsew")
+        table_frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_rowconfigure(0, weight=1)
+        columns = [f"column_{index}" for index in range(len(self.headers))]
+        table = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for column, header in zip(columns, self.headers):
+            table.heading(column, text=header)
+            table.column(column, width=150, minwidth=80, stretch=False)
+        table.grid(row=0, column=0, sticky="nsew")
+        vertical = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=table.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        table.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+
+        controls = ctk.CTkFrame(window, fg_color="transparent")
+        controls.grid(row=2, column=1, padx=16, pady=(0, 16), sticky="ew")
+        page_var = ctk.StringVar(value="")
+        page_size = 100
+        state = {"sheet": 0, "page": 0}
+
+        def render_page():
+            name, _key, rows = items[state["sheet"]]
+            page_count = max(1, (len(rows) + page_size - 1) // page_size)
+            state["page"] = max(0, min(state["page"], page_count - 1))
+            start = state["page"] * page_size
+            table.delete(*table.get_children())
+            for row in rows[start:start + page_size]:
+                table.insert("", "end", values=["" if pd.isna(value) else str(value) for value in row])
+            title_var.set(name)
+            page_var.set(f"Page {state['page'] + 1} of {page_count}  ·  {len(rows):,} records")
+            previous.configure(state="normal" if state["page"] else "disabled")
+            following.configure(state="normal" if state["page"] + 1 < page_count else "disabled")
+            table.yview_moveto(0)
+
+        def change_page(delta):
+            state["page"] += delta
+            render_page()
+
+        def select_sheet(_event):
+            selection = sheet_list.curselection()
+            if selection:
+                state["sheet"] = selection[0]
+                state["page"] = 0
+                render_page()
+
+        previous = ctk.CTkButton(controls, text="Previous", width=90, command=lambda: change_page(-1))
+        previous.pack(side="left")
+        ctk.CTkLabel(controls, textvariable=page_var).pack(side="left", padx=12)
+        following = ctk.CTkButton(controls, text="Next", width=90, command=lambda: change_page(1))
+        following.pack(side="left")
+        sheet_list.bind("<<ListboxSelect>>", select_sheet)
+        sheet_list.selection_set(0)
+        render_page()
 
     def _add_group_column(self):
         teal = "#12454B"

@@ -9,6 +9,7 @@ This application lets you select an Excel workbook, choose a worksheet, select o
 - Combine all worksheets across multiple uploaded workbooks; CSV files are treated as a single worksheet
 - Select one grouping column by default and add more grouping columns as needed
 - Preview all detected groups for the selected column combination
+- Preview selected output worksheets by name and inspect their table rows before generating the workbook
 - Sort detected groups alphabetically or by record count
 - Uncheck groups you do not want to generate
 - Merge matching groups across worksheets, or turn off `Combine duplicate groups` to preview and export each source separately

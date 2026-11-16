@@ -32,6 +32,16 @@ def sort_group_items(groups, sort_mode: str = SORT_ALPHABETICAL):
     return sorted(items, key=lambda item: " - ".join(item[0]).casefold())
 
 
+def preview_group_items(groups, selected_groups, sort_mode: str = SORT_ALPHABETICAL):
+    """Return selected groups with the worksheet names used for export."""
+    used_names: set[str] = set()
+    return [
+        (sanitize_sheet_name(" - ".join(key), used_names), key, rows)
+        for key, rows in sort_group_items(groups, sort_mode)
+        if key in selected_groups
+    ]
+
+
 def _select_excel_engine(file_path: str) -> str | None:
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".xls":
@@ -260,20 +270,15 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
         raise WorkbookProcessingError("The selected groups have changed. Refresh the group preview and try again.")
 
     output_ext = os.path.splitext(output_file)[1].lower()
-    used_names: set[str] = set()
     processed_rows = 0
-    ordered_groups = [
-        (group_key, rows) for group_key, rows in sort_group_items(combined_groups, sort_mode)
-        if group_key in selected_groups
-    ]
+    ordered_groups = preview_group_items(combined_groups, selected_groups, sort_mode)
     total_groups = len(ordered_groups)
 
     if output_ext == ".xls":
         workbook = xlwt.Workbook()
         styles = legacy_styles(workbook)
-        for index, (group_key, rows) in enumerate(ordered_groups, start=1):
+        for index, (sheet_title, group_key, rows) in enumerate(ordered_groups, start=1):
             display_name = " - ".join(group_key)
-            sheet_title = sanitize_sheet_name(display_name, used_names)
             sheet = workbook.add_sheet(sheet_title[:31])
             format_legacy_dimensions(sheet, combined_headers, rows)
             for col_num, header in enumerate(combined_headers or []):
@@ -305,9 +310,8 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     default_sheet = output_wb.active
     output_wb.remove(default_sheet)
 
-    for index, (group_key, rows) in enumerate(ordered_groups, start=1):
+    for index, (sheet_title, group_key, rows) in enumerate(ordered_groups, start=1):
         display_name = " - ".join(group_key)
-        sheet_title = sanitize_sheet_name(display_name, used_names)
         target_sheet = output_wb.create_sheet(title=sheet_title)
 
         for col_num, header in enumerate(combined_headers or [], start=1):
