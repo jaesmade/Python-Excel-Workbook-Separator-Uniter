@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
 from datetime import date
 from collections import OrderedDict
 from typing import Callable
@@ -9,7 +10,7 @@ import pandas as pd
 import xlwt
 from openpyxl import Workbook
 
-from .utils import detect_header_names, normalize_group_value, sanitize_sheet_name
+from .utils import SheetNameRegistry, detect_header_names, normalize_group_value, sanitize_sheet_name
 from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_worksheet, legacy_styles
 
 
@@ -34,7 +35,7 @@ def sort_group_items(groups, sort_mode: str = SORT_ALPHABETICAL):
 
 def preview_group_items(groups, selected_groups, sort_mode: str = SORT_ALPHABETICAL):
     """Return selected groups with the worksheet names used for export."""
-    used_names: set[str] = set()
+    used_names = SheetNameRegistry()
     return [
         (sanitize_sheet_name(" - ".join(key), used_names), key, rows)
         for key, rows in sort_group_items(groups, sort_mode)
@@ -54,9 +55,28 @@ def _select_excel_engine(file_path: str) -> str | None:
 def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFrame:
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".csv":
-        return pd.read_csv(file_path)
-    return pd.read_excel(file_path, sheet_name=0 if sheet_name is None else sheet_name,
-                         engine=_select_excel_engine(file_path))
+        raw = pd.read_csv(file_path, header=None, dtype=str, keep_default_na=False)
+        return _table_from_raw(raw, os.path.basename(file_path))
+    with pd.ExcelFile(file_path, engine=_select_excel_engine(file_path)) as workbook:
+        name = workbook.sheet_names[0] if sheet_name is None else sheet_name
+        raw = workbook.parse(sheet_name=name, header=None, dtype=object, keep_default_na=False)
+        return _table_from_raw(raw, f"{os.path.basename(file_path)} - {name}")
+
+
+def _table_from_raw(raw: pd.DataFrame, source_label: str) -> pd.DataFrame:
+    """Validate the original header before pandas can rename duplicate columns."""
+    if raw.empty:
+        return raw
+    original = detect_header_names(raw.iloc[0])
+    present = [name for name in original if name]
+    if len(present) != len(set(present)):
+        raise WorkbookProcessingError(f"Duplicate column headers found in '{source_label}'.")
+    headers = [name if name else f"Unnamed: {index}" for index, name in enumerate(original)]
+    if len(headers) != len(set(headers)):
+        raise WorkbookProcessingError(f"Duplicate column headers found in '{source_label}'.")
+    table = raw.iloc[1:].copy()
+    table.columns = headers
+    return table.reset_index(drop=True)
 
 
 def _iter_input_tables(file_path: str, sheet_name: str | None):
@@ -74,7 +94,26 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
                 raise WorkbookProcessingError(
                     f"Worksheet '{source_sheet_name}' was not found in '{os.path.basename(file_path)}'."
                 )
-            yield source_sheet_name, workbook.parse(sheet_name=source_sheet_name)
+            raw = workbook.parse(sheet_name=source_sheet_name, header=None, dtype=object, keep_default_na=False)
+            yield source_sheet_name, _table_from_raw(raw, f"{os.path.basename(file_path)} - {source_sheet_name}")
+
+
+def source_file_labels(file_paths: list[str]) -> list[str]:
+    """Use concise file labels unless a basename needs disambiguation."""
+    basenames = [os.path.basename(path) for path in file_paths]
+    counts = Counter(name.casefold() for name in basenames)
+    labels = []
+    used = set()
+    for path, basename in zip(file_paths, basenames):
+        base = os.path.abspath(path) if counts[basename.casefold()] > 1 else basename
+        label = base
+        suffix = 2
+        while label.casefold() in used:
+            label = f"{base} ({suffix})"
+            suffix += 1
+        used.add(label.casefold())
+        labels.append(label)
+    return labels
 
 
 def _row_has_values(row) -> bool:
@@ -215,10 +254,23 @@ def build_combined_group_map(
     """Build the same source-aware groups for the preview and workbook export."""
     normalized_tables, headers = _normalize_input_tables(input_tables)
     combined_groups = OrderedDict()
+    reserved_labels = {source_label for source_label, _table in normalized_tables}
+    used_labels = set()
     for source_label, table in normalized_tables:
+        # Different file/sheet pairs can form identical human-readable labels.
+        # Make those labels unique in input order for both preview and export.
+        label = source_label
+        suffix = 2
+        while label in used_labels:
+            label = f"{source_label} ({suffix})"
+            suffix += 1
+            while label in reserved_labels:
+                label = f"{source_label} ({suffix})"
+                suffix += 1
+        used_labels.add(label)
         _, groups = build_group_map(table, department_column, id_number_column, grouping_columns)
         for group_key, rows in groups.items():
-            output_key = group_key if combine_duplicates else (*group_key, source_label)
+            output_key = group_key if combine_duplicates else (*group_key, label)
             combined_groups.setdefault(output_key, []).extend(rows)
 
     if not combined_groups:
@@ -248,15 +300,26 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
     total_files = len(file_paths)
     input_tables = []
 
-    for file_index, file_path in enumerate(file_paths, start=1):
+    for file_index, (file_path, file_label) in enumerate(zip(file_paths, source_file_labels(file_paths)), start=1):
         for source_sheet_name, source_df in _iter_input_tables(file_path, sheet_name):
             if not source_df.empty:
-                source_label = f"{os.path.basename(file_path)} - {source_sheet_name}"
+                source_label = f"{file_label} - {source_sheet_name}"
                 input_tables.append((source_label, source_df))
 
         if progress_callback:
             progress_callback(int((file_index / total_files) * 40), f"Reading: {os.path.basename(file_path)}")
 
+    return split_input_tables(input_tables, department_column, id_number_column, output_file,
+                              selected_groups, progress_callback, combine_duplicates,
+                              grouping_columns, sort_mode)
+
+
+def split_input_tables(input_tables, department_column: str, id_number_column: str | None,
+                       output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
+                       progress_callback: Callable[[int, str], None] | None = None,
+                       combine_duplicates: bool = True, grouping_columns: list[str] | None = None,
+                       sort_mode: str = SORT_ALPHABETICAL):
+    """Export an already-loaded set of tables, preserving the preview snapshot."""
     combined_headers, combined_groups = build_combined_group_map(
         input_tables, department_column, id_number_column, grouping_columns, combine_duplicates
     )
@@ -315,14 +378,18 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
         target_sheet = output_wb.create_sheet(title=sheet_title)
 
         for col_num, header in enumerate(combined_headers or [], start=1):
-            target_sheet.cell(row=1, column=col_num, value=header)
+            cell = target_sheet.cell(row=1, column=col_num, value=header)
+            if isinstance(header, str) and header.startswith("="):
+                cell.data_type = "s"
 
         for row_num, row_values in enumerate(rows, start=2):
             for col_num, value in enumerate(row_values, start=1):
                 if pd.isna(value):
                     target_sheet.cell(row=row_num, column=col_num, value=None)
                 else:
-                    target_sheet.cell(row=row_num, column=col_num, value=value)
+                    cell = target_sheet.cell(row=row_num, column=col_num, value=value)
+                    if isinstance(value, str) and value.startswith("="):
+                        cell.data_type = "s"
             processed_rows += 1
 
         format_worksheet(target_sheet, index)
