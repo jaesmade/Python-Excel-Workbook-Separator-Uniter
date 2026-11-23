@@ -7,6 +7,7 @@ from collections import OrderedDict
 from typing import Callable
 
 import pandas as pd
+import xlrd
 import xlwt
 from openpyxl import Workbook
 
@@ -17,6 +18,34 @@ from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_works
 
 class WorkbookProcessingError(ValueError):
     pass
+
+
+class _ExcelError(str):
+    """Keep Excel errors distinct from ordinary text with the same spelling."""
+
+
+_LEGACY_ERROR_CODES = {text: code for code, text in xlrd.error_text_from_code.items()}
+
+
+def _parse_excel_sheet(workbook, sheet_name):
+    raw = workbook.parse(sheet_name=sheet_name, header=None, dtype=object, keep_default_na=False)
+    # pandas converts error cells to NaN before its NA settings are applied.
+    # Recover their values and types from the native reader's worksheet.
+    if workbook.engine == "xlrd":
+        sheet = workbook.book.sheet_by_name(sheet_name)
+        errors = ((row, col, xlrd.error_text_from_code[sheet.cell_value(row, col)])
+                  for row in range(sheet.nrows) for col in range(sheet.ncols)
+                  if sheet.cell_type(row, col) == xlrd.XL_CELL_ERROR)
+    else:
+        sheet = workbook.book[sheet_name]
+        if workbook.book.read_only:
+            sheet.reset_dimensions()
+        errors = ((cell.row - 1, cell.column - 1, cell.value)
+                  for row in sheet.iter_rows() for cell in row
+                  if cell.data_type == "e")
+    for row, col, value in errors:
+        raw.iat[row, col] = _ExcelError(value)
+    return raw
 
 
 ALL_SHEETS = "__ALL_SHEETS__"
@@ -74,7 +103,7 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
     with pd.ExcelFile(file_path, engine=_select_excel_engine(file_path)) as workbook:
         name = workbook.sheet_names[0] if sheet_name is None else sheet_name
         _ensure_no_formulas(file_path, name)
-        raw = workbook.parse(sheet_name=name, header=None, dtype=object, keep_default_na=False)
+        raw = _parse_excel_sheet(workbook, name)
         return _table_from_raw(raw, f"{os.path.basename(file_path)} - {name}")
 
 
@@ -110,7 +139,7 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
                     f"Worksheet '{source_sheet_name}' was not found in '{os.path.basename(file_path)}'."
                 )
             _ensure_no_formulas(file_path, source_sheet_name)
-            raw = workbook.parse(sheet_name=source_sheet_name, header=None, dtype=object, keep_default_na=False)
+            raw = _parse_excel_sheet(workbook, source_sheet_name)
             yield source_sheet_name, _table_from_raw(raw, f"{os.path.basename(file_path)} - {source_sheet_name}")
 
 
@@ -369,7 +398,12 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                     style = styles[(row_num % 2 == 0,
                                     combined_headers[col_num].casefold() in CENTERED_COLUMNS,
                                     isinstance(value, date))]
-                    if pd.isna(value):
+                    if isinstance(value, _ExcelError) and value in _LEGACY_ERROR_CODES:
+                        sheet.row(row_num).set_cell_error(col_num, _LEGACY_ERROR_CODES[value], style)
+                    elif isinstance(value, _ExcelError):
+                        # Newer error codes cannot be represented in legacy XLS.
+                        sheet.write(row_num, col_num, str(value), style)
+                    elif pd.isna(value):
                         sheet.write(row_num, col_num, "", style)
                     else:
                         sheet.write(row_num, col_num, value, style)
@@ -404,7 +438,9 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                     target_sheet.cell(row=row_num, column=col_num, value=None)
                 else:
                     cell = target_sheet.cell(row=row_num, column=col_num, value=value)
-                    if isinstance(value, str) and value.startswith("="):
+                    if isinstance(value, _ExcelError):
+                        cell.data_type = "e"
+                    elif isinstance(value, str):
                         cell.data_type = "s"
             processed_rows += 1
 
