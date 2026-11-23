@@ -333,17 +333,6 @@ class ExcelSplitterApp(ctk.CTk):
             label="Version history", command=lambda: open_project_link(self, "Version history", f"{PROJECT_URL}/releases"),
         )
 
-        ctk.CTkLabel(
-            header, text="▦", width=40, height=40, corner_radius=9, fg_color="#20664F",
-            text_color="#F1FFF7", font=ctk.CTkFont(family="Segoe UI Symbol", size=25),
-        ).grid(row=1, column=0, rowspan=2, padx=(22, 12), pady=6)
-        ctk.CTkLabel(
-            header, text="Excel Arranger", text_color="#F1FFF7", font=ctk.CTkFont(size=23, weight="bold"),
-        ).grid(row=1, column=1, pady=(4, 0), sticky="sw")
-        ctk.CTkLabel(
-            header, text="Split and combine Excel or CSV files", text_color="#B6D7C8", height=18,
-        ).grid(row=2, column=1, pady=(0, 3), sticky="nw")
-
     def _add_header_menu(self, menu_bar, label):
         background = menu_bar.cget("bg")
         button = tk.Menubutton(
