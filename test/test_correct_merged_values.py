@@ -3,9 +3,14 @@ import os
 import pandas as pd
 import pytest
 import xlrd
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
-from excel_splitter.core import WorkbookProcessingError, split_input_tables, split_workbooks
+from excel_splitter.core import (
+    WorkbookProcessingError,
+    read_workbook_sheet,
+    split_input_tables,
+    split_workbooks,
+)
 
 
 def test_file_export_does_not_overwrite_input(tmp_path):
@@ -80,3 +85,40 @@ def test_correction_preserves_unmapped_values_and_literal_formula_text(tmp_path)
         assert workbook["Other"].cell(2, 1).value == " Other "
     finally:
         workbook.close()
+
+
+@pytest.mark.parametrize("extension", ["xlsx", "xls"])
+@pytest.mark.parametrize("regions", [("North", "South"), ("South",)], ids=["all", "merged-only"])
+def test_numeric_merge_correction_preserves_cell_types_and_formats(tmp_path, extension, regions):
+    source = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(("ID", "Region"))
+    sheet.append((12, "North"))
+    sheet.append((13, "South"))
+    sheet["A2"].number_format = "0000"
+    sheet["A3"].number_format = "00000"
+    workbook.save(source)
+    workbook.close()
+    table, _, _ = read_workbook_sheet(str(source), sheet.title)
+    output = tmp_path / f"output.{extension}"
+
+    split_input_tables([("source", table)], "ID", "Region", str(output),
+                       selected_groups={("12", region) for region in regions},
+                       value_mappings={("ID", "13"): "12"}, correct_merged_values=True)
+
+    formats = {"North": "0000", "South": "00000"}
+    if extension == "xlsx":
+        workbook = load_workbook(output, read_only=True)
+        try:
+            for region in regions:
+                cell = workbook[f"12 - {region}"]["A2"]
+                assert (cell.value, cell.data_type, cell.number_format) == (12, "n", formats[region])
+        finally:
+            workbook.close()
+    else:
+        with xlrd.open_workbook(output, formatting_info=True) as book:
+            for region in regions:
+                cell = book.sheet_by_name(f"12 - {region}").cell(1, 0)
+                number_format = book.format_map[book.xf_list[cell.xf_index].format_key].format_str
+                assert (cell.value, cell.ctype, number_format) == (12, xlrd.XL_CELL_NUMBER, formats[region])

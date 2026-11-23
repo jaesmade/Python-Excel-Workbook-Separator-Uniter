@@ -6,6 +6,7 @@ from datetime import date
 from collections import OrderedDict
 from difflib import SequenceMatcher
 from enum import Enum, auto
+from numbers import Real
 from typing import Callable
 from itertools import chain
 
@@ -167,6 +168,26 @@ def sort_group_items(groups, sort_mode: str = SORT_ALPHABETICAL):
     return sorted(items, key=lambda item: " - ".join(item[0]).casefold())
 
 
+def _is_numeric_group_value(value):
+    return isinstance(value, Real) and not isinstance(value, bool)
+
+
+def _numeric_merge_targets(groups, column_indexes, merge_targets):
+    """Find numeric values behind preferred labels, even in unselected groups."""
+    numeric_targets = {}
+    for key, rows in groups.items():
+        for target, (column, cell_index) in zip(key, column_indexes):
+            target_key = (column, target)
+            if target_key not in merge_targets or target_key in numeric_targets:
+                continue
+            for row in rows:
+                value = _ensure_python_value(row[cell_index])
+                if _is_numeric_group_value(value) and normalize_group_value(value, "UNKNOWN GROUP") == target:
+                    numeric_targets[target_key] = value
+                    break
+    return numeric_targets
+
+
 def preview_group_items(groups, selected_groups, sort_mode: str = SORT_ALPHABETICAL,
                         *, headers=None, grouping_columns=None, value_mappings=None,
                         correct_merged_values: bool = False):
@@ -181,17 +202,24 @@ def preview_group_items(groups, selected_groups, sort_mode: str = SORT_ALPHABETI
         return items
 
     columns = [str(column).strip() for column in grouping_columns if str(column).strip()]
-    indexes = [headers.index(column) for column in columns]
+    column_indexes = [(column, headers.index(column)) for column in columns]
     merge_targets = {(column, target) for (column, _), target in value_mappings.items()}
+    numeric_targets = _numeric_merge_targets(groups, column_indexes, merge_targets)
     corrected_groups = []
     for title, key, rows in items:
         corrected_rows = []
         for row in rows:
             values = list(row)
-            for group_index, (column, cell_index) in enumerate(zip(columns, indexes)):
-                value = normalize_group_value(_ensure_python_value(values[cell_index]), "UNKNOWN GROUP")
-                if (column, value) in value_mappings or (column, value) in merge_targets:
-                    values[cell_index] = key[group_index]
+            for target, (column, cell_index) in zip(key, column_indexes):
+                original = _ensure_python_value(values[cell_index])
+                value = normalize_group_value(original, "UNKNOWN GROUP")
+                if (column, value) not in value_mappings and (column, value) not in merge_targets:
+                    continue
+                if _is_numeric_group_value(original):
+                    if value == target:
+                        continue
+                    target = numeric_targets.get((column, target), target)
+                values[cell_index] = target
             formats = getattr(row, "number_formats", None)
             corrected_rows.append(_FormattedRow(values, formats) if formats is not None else tuple(values))
         corrected_groups.append((title, key, corrected_rows))
