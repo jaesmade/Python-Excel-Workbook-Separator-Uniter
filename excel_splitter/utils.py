@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 
 INVALID_SHEET_CHARS = set(':/?*[]\\')
+RESERVED_SHEET_NAMES = frozenset({"history"})
+SHEET_NAME_EDGES = re.compile(r"^[\s']+|[\s']+$")
 
 
 class SheetNameRegistry:
     """Track case-insensitive names and the next suffix for each base name."""
 
     def __init__(self):
-        self._names: set[str] = set()
+        self._names: set[str] = set(RESERVED_SHEET_NAMES)
         self._next_suffix: dict[tuple[str, ...], int] = {}
 
     def allocate(self, candidate: str) -> str:
@@ -47,20 +50,15 @@ def normalize_group_value(value, default_label: str) -> str:
 
 def sanitize_sheet_name(name: str, used_names: set[str] | SheetNameRegistry) -> str:
     cleaned = "".join("-" if char in INVALID_SHEET_CHARS else char for char in str(name or "GROUP"))
-    cleaned = cleaned.strip().strip(".")
-    if not cleaned:
-        cleaned = "GROUP"
-
-    base_name = cleaned[:31]
-    if not base_name:
-        base_name = "GROUP"
-
-    candidate = base_name.strip()
+    cleaned = SHEET_NAME_EDGES.sub("", cleaned.strip().strip("."))
+    # Truncation can leave an internal apostrophe at the end of the title.
+    candidate = SHEET_NAME_EDGES.sub("", cleaned[:31]) or "GROUP"
     if isinstance(used_names, SheetNameRegistry):
         return used_names.allocate(candidate)
+    unavailable_names = RESERVED_SHEET_NAMES | {name.casefold() for name in used_names}
     counter = 2
     final_name = candidate
-    while final_name.casefold() in {name.casefold() for name in used_names}:
+    while final_name.casefold() in unavailable_names:
         suffix = f" - {counter}"
         max_length = 31 - len(suffix)
         final_name = candidate[:max_length].rstrip(" -_") + suffix

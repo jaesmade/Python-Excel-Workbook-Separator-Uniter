@@ -28,6 +28,11 @@ class SheetNameRegistryTests(unittest.TestCase):
         self.assertEqual(utils.sanitize_sheet_name("sales", used), "sales - 2")
         self.assertEqual(used, {"Sales", "sales - 2"})
 
+    def test_plain_sets_skip_the_reserved_history_name(self):
+        used = {"History - 2"}
+        self.assertEqual(utils.sanitize_sheet_name("'HiStOrY'", used), "HiStOrY - 3")
+        self.assertEqual(used, {"History - 2", "HiStOrY - 3"})
+
     def test_case_variants_and_unicode_truncation_use_first_available_suffix(self):
         registry = utils.SheetNameRegistry()
         short = "ß" * 15 + "a"

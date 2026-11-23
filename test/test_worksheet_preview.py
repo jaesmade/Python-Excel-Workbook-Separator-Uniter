@@ -9,6 +9,30 @@ from excel_splitter import core
 
 
 class WorksheetPreviewTests(unittest.TestCase):
+    def test_preview_and_export_use_excel_compatible_titles(self):
+        prefix = "x" * 30
+        departments = ["History - 2", "History", "hIsToRy", "'Ops", "Ops'", "O'Neil", prefix + "'s", "' '"]
+        expected_titles = ["History - 2", "History - 3", "hIsToRy - 4", "Ops", "Ops - 2", "O'Neil", prefix, "GROUP"]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.csv"
+            output = Path(directory) / "output.xlsx"
+            pd.DataFrame({"Department": departments}).to_csv(source, index=False)
+            tables = list(core._iter_input_tables(str(source), core.ALL_SHEETS))
+            _, groups = core.build_combined_group_map(tables, "Department")
+            preview = core.preview_group_items(groups, set(groups), core.SORT_COUNT_DESCENDING)
+            core.split_workbooks(
+                [str(source)], core.ALL_SHEETS, "Department", None, str(output),
+                sort_mode=core.SORT_COUNT_DESCENDING,
+            )
+
+            workbook = load_workbook(output, read_only=True)
+            try:
+                self.assertEqual([item[0] for item in preview], expected_titles)
+                self.assertEqual(workbook.sheetnames, expected_titles)
+                self.assertEqual([sheet["A2"].value for sheet in workbook], departments)
+            finally:
+                workbook.close()
+
     def test_preview_names_match_excel_for_case_insensitive_collisions(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.csv"
