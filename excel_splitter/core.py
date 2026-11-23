@@ -63,16 +63,8 @@ def _parse_excel_sheet(workbook, sheet_name):
         errors = ((row, col, xlrd.error_text_from_code[sheet.cell_value(row, col)])
                   for row in range(sheet.nrows) for col in range(sheet.ncols)
                   if sheet.cell_type(row, col) == xlrd.XL_CELL_ERROR)
-    else:
-        sheet = workbook.book[sheet_name]
-        if workbook.book.read_only:
-            sheet.reset_dimensions()
-        errors = ((cell.row - 1, cell.column - 1, cell.value)
-                  for row in sheet.iter_rows() for cell in row
-                  if cell.data_type == "e")
-    for row, col, value in errors:
-        raw.iat[row, col] = _ExcelError(value)
-    if workbook.engine == "xlrd":
+        for row, col, value in errors:
+            raw.iat[row, col] = _ExcelError(value)
         book = workbook.book
         formats = (
             (book.format_map[book.xf_list[sheet.cell_xf_index(row, col)].format_key].format_str
@@ -81,9 +73,20 @@ def _parse_excel_sheet(workbook, sheet_name):
             for row in range(raw.shape[0])
         )
     else:
-        formats = ((getattr(cell, "number_format", None) for cell in row)
-                   for row in sheet.iter_rows(min_row=1, max_row=raw.shape[0],
-                                              min_col=1, max_col=raw.shape[1]))
+        sheet = workbook.book[sheet_name]
+        if workbook.book.read_only:
+            sheet.reset_dimensions()
+        formats = []
+        if not raw.empty:
+            # Errors count as populated cells in pandas, so its bounds include
+            # every error and skip trailing rows and columns with only styles.
+            for row in sheet.iter_rows(max_row=raw.shape[0], max_col=raw.shape[1]):
+                row_formats = []
+                for cell in row:
+                    if cell.data_type == "e":
+                        raw.iat[cell.row - 1, cell.column - 1] = _ExcelError(cell.value)
+                    row_formats.append(getattr(cell, "number_format", None))
+                formats.append(tuple(row_formats))
     raw.attrs["number_formats"] = _NumberFormats(formats)
     return raw
 
