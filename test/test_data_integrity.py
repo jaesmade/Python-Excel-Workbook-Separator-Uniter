@@ -4,7 +4,7 @@ import pytest
 import xlwt
 from openpyxl import Workbook, load_workbook
 
-from excel_splitter.core import ALL_SHEETS, WorkbookProcessingError, split_workbooks
+from excel_splitter.core import ALL_SHEETS, WorkbookProcessingError, read_workbook_sheet, split_workbooks
 
 
 def test_csv_preserves_literal_values_and_formula_like_text(tmp_path):
@@ -33,6 +33,39 @@ def test_excel_preserves_text_numbers_and_dates(tmp_path):
     workbook = load_workbook(output, data_only=False)
     try:
         assert list(workbook.active.values)[1] == ("Sales", "00123", "NA", 42, datetime(2024, 5, 1))
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize("leading_rows", [[[]], [[], [" ", "\t"]]])
+def test_xlsx_uses_first_populated_row_as_headers(tmp_path, leading_rows):
+    source = tmp_path / "staff.xlsx"
+    output = tmp_path / "out.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Staff"
+    for row in leading_rows:
+        sheet.append(row)
+    sheet.append(["Department", "ID"])
+    records = [("Sales", 123, "00000"), ("Support", 456, "000000")]
+    for department, identifier, number_format in records:
+        sheet.append([department, identifier])
+        sheet.cell(sheet.max_row, 2).number_format = number_format
+    workbook.save(source)
+    workbook.close()
+
+    _, _, headers = read_workbook_sheet(str(source), "Staff")
+    result = split_workbooks([str(source)], ALL_SHEETS, headers[0], None, str(output))
+
+    assert result["processed_rows"] == 2
+    assert headers == ["Department", "ID"]
+    workbook = load_workbook(output)
+    try:
+        assert workbook.sheetnames == ["Sales", "Support"]
+        for department, identifier, number_format in records:
+            sheet = workbook[department]
+            assert list(sheet.values) == [("Department", "ID"), (department, identifier)]
+            assert sheet["B2"].number_format == number_format
     finally:
         workbook.close()
 

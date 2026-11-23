@@ -235,21 +235,26 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
 
 
 def _table_from_raw(raw: pd.DataFrame, source_label: str) -> pd.DataFrame:
-    """Validate the original header before pandas can rename duplicate columns."""
-    if raw.empty:
-        return raw
-    original = detect_header_names(raw.iloc[0])
+    """Find the first populated row and validate its headers before naming columns."""
+    for header_index, row in enumerate(raw.itertuples(index=False, name=None)):
+        if _row_has_values(row):
+            break
+    else:
+        return pd.DataFrame()
+
+    original = detect_header_names(row)
     present = [name for name in original if name]
     if len(present) != len(set(present)):
         raise WorkbookProcessingError(f"Duplicate column headers found in '{source_label}'.")
     headers = [name if name else f"Unnamed: {index}" for index, name in enumerate(original)]
     if len(headers) != len(set(headers)):
         raise WorkbookProcessingError(f"Duplicate column headers found in '{source_label}'.")
-    table = raw.iloc[1:].copy()
+    data_start = header_index + 1
+    table = raw.iloc[data_start:].copy()
     table.columns = headers
     table = table.reset_index(drop=True)
     if "number_formats" in raw.attrs:
-        table.attrs["number_formats"] = raw.attrs["number_formats"][1:]
+        table.attrs["number_formats"] = raw.attrs["number_formats"][data_start:]
     return table
 
 
