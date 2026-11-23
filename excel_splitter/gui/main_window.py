@@ -20,9 +20,9 @@ from excel_splitter.core import (
     SORT_COUNT_DESCENDING,
     WorkbookProcessingError,
     _iter_input_tables,
-    _normalize_input_tables,
     build_combined_group_map,
     ensure_output_is_not_input,
+    input_table_headers,
     merge_group_values,
     preview_group_items,
     sort_group_items,
@@ -781,7 +781,7 @@ class ExcelSplitterApp(ctk.CTk):
             if not tables:
                 raise WorkbookProcessingError("The selected worksheet does not contain any data.")
 
-            _tables, self.headers = _normalize_input_tables(tables)
+            self.headers = input_table_headers(tables)
             if not self.headers:
                 raise WorkbookProcessingError("The selected worksheet does not contain any data.")
             for _frame, _variable, dropdown, _remove in self.group_column_controls:

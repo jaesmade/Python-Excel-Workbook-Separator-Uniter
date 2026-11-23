@@ -382,7 +382,7 @@ def _row_has_values(row) -> bool:
     )
 
 
-def _normalize_input_tables(input_tables):
+def _input_table_layout(input_tables):
     tables = []
     headers: list[str] = []
     seen_headers: set[str] = set()
@@ -390,23 +390,30 @@ def _normalize_input_tables(input_tables):
     for source_name, table in input_tables:
         if not any(_row_has_values(row) for row in _iter_table_values(table)):
             continue
-        normalized_table = table.copy()
-        normalized_headers = detect_header_names(normalized_table.columns)
+        normalized_headers = detect_header_names(table.columns)
         if len(normalized_headers) != len(set(normalized_headers)):
             raise WorkbookProcessingError(f"Duplicate column headers found in '{source_name}'.")
 
-        normalized_table.columns = normalized_headers
         for header in normalized_headers:
             if header not in seen_headers:
                 headers.append(header)
                 seen_headers.add(header)
-        tables.append((source_name, normalized_table))
+        tables.append((source_name, table, normalized_headers))
+    return tables, headers
 
-    if not tables:
-        return [], headers
 
+def input_table_headers(input_tables) -> list[str]:
+    """Return the ordered column names of populated input tables."""
+    _, headers = _input_table_layout(input_tables)
+    return headers
+
+
+def _normalize_input_tables(input_tables):
+    tables, headers = _input_table_layout(input_tables)
     aligned_tables = []
-    for source_name, table in tables:
+    for source_name, source_table, normalized_headers in tables:
+        table = source_table.copy()
+        table.columns = normalized_headers
         aligned = table.reindex(columns=headers)
         formats = table.attrs.get("number_formats")
         if formats is not None and (not isinstance(formats, _NumberFormats) or list(table.columns) != headers):

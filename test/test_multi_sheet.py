@@ -360,6 +360,24 @@ class MultiSheetWorkbookTests(unittest.TestCase):
         self.assertEqual(list(app.sheet_options), ["All sheets", "First", "Second"])
         self.assertEqual(set(app.groups), {("Sales",), ("Support",)})
 
+    def test_ui_sheet_selection_aligns_tables_only_for_grouping(self):
+        app = self.make_app([str(self.folder / "staff.xlsx")])
+        app.sheet_options = {"All sheets": ALL_SHEETS}
+        app.input_tables = [
+            ("Blank", pd.DataFrame([[" "]], columns=["Unused"])),
+            ("First", pd.DataFrame([["Alice", "Sales"]], columns=[" Name ", "Department"])),
+            ("Second", pd.DataFrame([["Support", "Engineer"]], columns=["Department", "Title"])),
+        ]
+
+        with patch.object(
+            pd.DataFrame, "reindex", autospec=True, side_effect=pd.DataFrame.reindex,
+        ) as reindex:
+            self.assertTrue(app.on_sheet_selected("All sheets"))
+
+        self.assertEqual(app.headers, ["Name", "Department", "Title"])
+        self.assertEqual(list(app.groups), [("Sales",), ("Support",)])
+        self.assertLessEqual(reindex.call_count, 2)
+
     def test_ui_real_sheet_named_all_sheets_remains_selectable(self):
         source = self.write_workbook("staff.xlsx", {
             "All sheets": [["Department", "Name"], ["Sales", "Alice"]],
