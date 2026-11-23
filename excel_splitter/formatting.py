@@ -26,7 +26,8 @@ def column_width(header, values):
 def format_worksheet(sheet, table_index: int):
     """Style a populated worksheet without changing its headers or values."""
     sheet.sheet_view.showGridLines = False
-    sheet.freeze_panes = f"{get_column_letter(min(3, sheet.max_column))}2"
+    last_column = sheet.max_column
+    sheet.freeze_panes = f"{get_column_letter(min(3, last_column))}2"
     sheet.row_dimensions[1].height = 31
     body_font = Font(name="Arial", size=11, color="000000")
     header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
@@ -42,7 +43,7 @@ def format_worksheet(sheet, table_index: int):
         header.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
         header.border = Border(
             left=white_line if header.column > 1 else Side(),
-            right=white_line if header.column < sheet.max_column else Side(),
+            right=white_line if header.column < last_column else Side(),
             bottom=Side(style="medium", color=NAVY),
         )
         alignment = Alignment(

@@ -558,6 +558,13 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
         raise WorkbookProcessingError("The selected groups have changed. Refresh the group preview and try again.")
 
     output_ext = os.path.splitext(output_file)[1].lower()
+    column_count = len(combined_headers)
+    if output_ext != ".xls" and column_count > 16_384:
+        raise WorkbookProcessingError(
+            f"The output has {column_count:,} columns, exceeding Excel's 16,384-column worksheet limit. "
+            "Reduce the number of input columns and try again."
+        )
+
     processed_rows = 0
     ordered_groups = preview_group_items(
         combined_groups, selected_groups, sort_mode, headers=combined_headers,
@@ -571,10 +578,18 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
     for sheet_title, _group_key, rows in ordered_groups:
         for row_num, values in enumerate(chain([combined_headers], rows), start=1):
             for col_num, value in enumerate(values, start=1):
-                if isinstance(value, str) and len(value) > 32767:
+                if not isinstance(value, str):
+                    continue
+                text_length = len(value)
+                if text_length > 32767:
                     raise WorkbookProcessingError(
                         f"Text in worksheet '{sheet_title}', row {row_num}, column {col_num} "
                         "exceeds Excel's 32,767-character cell limit. Shorten the value and try again."
+                    )
+                if row_num == 1 and output_ext != ".xls" and text_length > 255:
+                    raise WorkbookProcessingError(
+                        f"The table header in column {col_num} exceeds Excel's 255-character table header limit. "
+                        "Shorten the header and try again."
                     )
 
     if output_ext == ".xls":
@@ -626,10 +641,9 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
         display_name = " - ".join(group_key)
         target_sheet = output_wb.create_sheet(title=sheet_title)
 
-        for col_num, header in enumerate(combined_headers or [], start=1):
+        for col_num, header in enumerate(combined_headers, start=1):
             cell = target_sheet.cell(row=1, column=col_num, value=header)
-            if isinstance(header, str) and header.startswith("="):
-                cell.data_type = "s"
+            cell.data_type = "s"
 
         for row_num, row_values in enumerate(rows, start=2):
             for col_num, value in enumerate(row_values, start=1):
