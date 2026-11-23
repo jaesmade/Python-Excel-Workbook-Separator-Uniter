@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import date
 from collections import OrderedDict
 from typing import Callable
+from itertools import chain
 
 import pandas as pd
 import xlrd
@@ -381,6 +382,17 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
     processed_rows = 0
     ordered_groups = preview_group_items(combined_groups, selected_groups, sort_mode)
     total_groups = len(ordered_groups)
+
+    # Both Excel formats limit cell text to 32,767 characters. openpyxl
+    # silently truncates longer strings, so check the actual export first.
+    for sheet_title, _group_key, rows in ordered_groups:
+        for row_num, values in enumerate(chain([combined_headers], rows), start=1):
+            for col_num, value in enumerate(values, start=1):
+                if isinstance(value, str) and len(value) > 32767:
+                    raise WorkbookProcessingError(
+                        f"Text in worksheet '{sheet_title}', row {row_num}, column {col_num} "
+                        "exceeds Excel's 32,767-character cell limit. Shorten the value and try again."
+                    )
 
     if output_ext == ".xls":
         workbook = xlwt.Workbook()
