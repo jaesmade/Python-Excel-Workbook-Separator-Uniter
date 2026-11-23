@@ -245,14 +245,14 @@ class SpellingReviewDialog(ctk.CTkToplevel):
 
 class ExcelSplitterApp(ctk.CTk):
     def __init__(self):
-        super().__init__(fg_color="#F9F6EF")
+        super().__init__(fg_color="#F3F5FA")
         self.title("Excel Splitter & Merger")
         if sys.platform.startswith("win"):
             self.iconbitmap(str(Path(__file__).resolve().parents[1] / "assets" / "app.ico"))
-        self.geometry("930x780")
+        self.geometry("1000x800")
         self.minsize(860, 680)
 
-        self.configure(fg_color="#F9F6EF")
+        self.configure(fg_color="#F3F5FA")
 
         self.file_path = None
         self.file_paths = []
@@ -273,23 +273,30 @@ class ExcelSplitterApp(ctk.CTk):
         self._build_ui()
 
     def _build_ui(self):
-        teal = "#12454B"
-        teal_dark = "#0C3035"
-        teal_mid = "#1D646A"
-        ivory = "#F9F6EF"
-        ivory_alt = "#F3EEE3"
-        line = "#D7D0C3"
-        text = "#14353A"
-        muted = "#5B6E70"
+        teal = "#4F46E5"
+        teal_dark = "#3730A3"
+        teal_mid = "#6366F1"
+        ivory = "#F3F5FA"
+        ivory_alt = "#F1F4F9"
+        line = "#DBE2EE"
+        text = "#17233B"
+        muted = "#64748B"
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, padx=24, pady=(20, 12), sticky="ew")
+        ctk.CTkLabel(header, text="Excel Arranger", text_color=text,
+                     font=ctk.CTkFont(size=25, weight="bold"), anchor="w").pack(anchor="w")
+        ctk.CTkLabel(header, text="Organize your data into ready-to-use worksheets.",
+                     text_color=muted, font=ctk.CTkFont(size=13), anchor="w").pack(anchor="w", pady=(2, 0))
 
         top = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
-        top.grid(row=0, column=0, padx=16, pady=16, sticky="ew")
+        top.grid(row=1, column=0, padx=20, pady=(0, 12), sticky="ew")
         top.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(top, text="Excel File", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=0, column=0, padx=(18, 12), pady=(18, 10), sticky="w")
+        ctk.CTkLabel(top, text="Source files", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=0, column=0, padx=(18, 12), pady=(18, 10), sticky="w")
         self.file_var = ctk.StringVar(value="No file selected")
         self.file_entry = ctk.CTkEntry(
             top,
@@ -331,7 +338,7 @@ class ExcelSplitterApp(ctk.CTk):
         )
         self.sheet_dropdown.grid(row=1, column=1, columnspan=2, padx=(0, 18), pady=(8, 10), sticky="ew")
 
-        ctk.CTkLabel(top, text="Grouping Columns", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=(18, 12), pady=(8, 10), sticky="nw")
+        ctk.CTkLabel(top, text="Group by", text_color=text, font=ctk.CTkFont(size=13, weight="bold")).grid(row=2, column=0, padx=(18, 12), pady=(8, 10), sticky="nw")
         self.group_columns_frame = ctk.CTkFrame(top, fg_color="transparent")
         self.group_columns_frame.grid(row=2, column=1, padx=(0, 10), pady=(4, 6), sticky="ew")
         self.group_columns_frame.grid_columnconfigure(0, weight=1)
@@ -366,20 +373,20 @@ class ExcelSplitterApp(ctk.CTk):
         merge_actions.grid(row=3, column=1, columnspan=2, padx=(0, 18), pady=(8, 16), sticky="e")
         ctk.CTkButton(
             merge_actions, text="Review spelling", command=self.review_spelling_suggestions,
-            width=130, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+            width=130, height=34, fg_color=ivory_alt, hover_color=line, text_color=text,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             merge_actions, text="Manual merge", command=self.manual_merge_categories,
-            width=130, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+            width=130, height=34, fg_color=ivory_alt, hover_color=line, text_color=text,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             merge_actions, text="Saved spellings", command=self.manage_saved_spellings,
-            width=130, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+            width=130, height=34, fg_color=ivory_alt, hover_color=line, text_color=text,
         ).pack(side="left")
 
         ctk.CTkButton(
             top, text="Review duplicate records", command=self.review_duplicate_records,
-            width=190, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+            width=190, height=34, fg_color=ivory_alt, hover_color=line, text_color=text,
         ).grid(row=4, column=1, columnspan=2, padx=(0, 18), pady=(0, 12), sticky="e")
 
         self.correct_merged_values_var = ctk.BooleanVar(value=False)
@@ -390,12 +397,12 @@ class ExcelSplitterApp(ctk.CTk):
         ).grid(row=4, column=0, padx=(18, 18), pady=(0, 16), sticky="w")
 
         body = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
-        body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
+        body.grid(row=2, column=0, padx=20, pady=(0, 12), sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
         body.grid_rowconfigure(2, weight=1)
 
-        ctk.CTkLabel(body, text="Detected Groups", text_color=text, font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=(18, 8), pady=(18, 10), sticky="w")
+        ctk.CTkLabel(body, text="Detected groups", text_color=text, font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=(18, 8), pady=(18, 10), sticky="w")
         self.group_sort_var = ctk.StringVar(value="Alphabetical")
         self.group_sort_dropdown = ctk.CTkOptionMenu(
             body,
@@ -425,13 +432,13 @@ class ExcelSplitterApp(ctk.CTk):
         self.group_select_all = ctk.CTkButton(
             group_tools, text="Select all matches", width=140, height=34,
             command=lambda: self._select_matching_groups(True),
-            fg_color=teal, hover_color=teal_dark, text_color=ivory,
+            fg_color=ivory_alt, hover_color=line, text_color=text,
         )
         self.group_select_all.grid(row=0, column=1, padx=(0, 8))
         self.group_deselect_all = ctk.CTkButton(
             group_tools, text="Deselect all matches", width=150, height=34,
             command=lambda: self._select_matching_groups(False),
-            fg_color=teal, hover_color=teal_dark, text_color=ivory,
+            fg_color=ivory_alt, hover_color=line, text_color=text,
         )
         self.group_deselect_all.grid(row=0, column=2)
 
@@ -441,48 +448,43 @@ class ExcelSplitterApp(ctk.CTk):
 
         group_pages = ctk.CTkFrame(body, fg_color="transparent")
         group_pages.grid(row=3, column=0, columnspan=2, padx=18, pady=(0, 16), sticky="w")
-        self.group_previous = ctk.CTkButton(group_pages, text="Previous", width=90, command=lambda: self._change_group_page(-1))
+        self.group_previous = ctk.CTkButton(group_pages, text="Previous", width=90,
+                                             fg_color=ivory_alt, hover_color=line, text_color=text,
+                                             command=lambda: self._change_group_page(-1))
         self.group_previous.pack(side="left")
         self.group_previous.configure(state="disabled")
         self.group_page_var = ctk.StringVar(value="")
         ctk.CTkLabel(group_pages, textvariable=self.group_page_var).pack(side="left", padx=12)
-        self.group_next = ctk.CTkButton(group_pages, text="Next", width=90, command=lambda: self._change_group_page(1))
+        self.group_next = ctk.CTkButton(group_pages, text="Next", width=90,
+                                         fg_color=ivory_alt, hover_color=line, text_color=text,
+                                         command=lambda: self._change_group_page(1))
         self.group_next.pack(side="left")
         self.group_next.configure(state="disabled")
         self.group_search_var.trace_add("write", self._on_group_search_changed)
 
         bottom = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
-        bottom.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+        bottom.grid(row=3, column=0, padx=20, pady=(0, 20), sticky="ew")
         bottom.grid_columnconfigure(0, weight=1)
 
         self.progress_var = ctk.StringVar(value="Ready")
-        self.progress_bar = ctk.CTkProgressBar(bottom, width=600, height=16, fg_color=ivory_alt, progress_color=teal)
+        self.progress_label = ctk.CTkLabel(bottom, textvariable=self.progress_var, text_color=muted,
+                                           font=ctk.CTkFont(size=13), anchor="w")
+        self.progress_label.grid(row=0, column=0, padx=(18, 20), pady=(16, 4), sticky="ew")
+        self.progress_bar = ctk.CTkProgressBar(bottom, height=7, fg_color=ivory_alt, progress_color=teal)
         self.progress_bar.set(0)
-        self.progress_bar.grid(row=0, column=0, padx=18, pady=(18, 8), sticky="ew")
-        self.progress_label = ctk.CTkLabel(bottom, textvariable=self.progress_var, text_color=muted, anchor="w")
-        self.progress_label.grid(row=1, column=0, padx=18, pady=(0, 12), sticky="ew")
+        self.progress_bar.grid(row=1, column=0, padx=(18, 20), pady=(0, 16), sticky="ew")
 
-        self.generate_btn = ctk.CTkButton(
-            bottom,
-            text="GENERATE WORKBOOK",
-            command=self.start_generation,
-            height=44,
-            font=ctk.CTkFont(size=15, weight="bold"),
-            fg_color=teal,
-            hover_color=teal_dark,
-            text_color=ivory,
-            border_color=teal,
-        )
         ctk.CTkButton(
-            bottom,
-            text="Preview Worksheets",
-            command=self.preview_worksheets,
-            height=38,
-            fg_color=ivory_alt,
-            hover_color=line,
-            text_color=text,
-        ).grid(row=2, column=0, padx=18, pady=(0, 8), sticky="ew")
-        self.generate_btn.grid(row=3, column=0, padx=18, pady=(0, 18), sticky="ew")
+            bottom, text="Preview worksheets", command=self.preview_worksheets,
+            width=160, height=42, fg_color=ivory_alt, hover_color=line, text_color=text,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).grid(row=0, column=1, rowspan=2, padx=(0, 8), pady=14)
+        self.generate_btn = ctk.CTkButton(
+            bottom, text="Generate workbook", command=self.start_generation,
+            width=180, height=42, font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=teal, hover_color=teal_dark, text_color="#FFFFFF",
+        )
+        self.generate_btn.grid(row=0, column=2, rowspan=2, padx=(0, 18), pady=14)
 
     def preview_worksheets(self):
         selected_groups = set(self.selected_group_keys)
@@ -586,10 +588,10 @@ class ExcelSplitterApp(ctk.CTk):
         render_page()
 
     def _add_group_column(self):
-        teal = "#12454B"
-        teal_dark = "#0C3035"
-        ivory_alt = "#F3EEE3"
-        text = "#14353A"
+        teal = "#4F46E5"
+        teal_dark = "#3730A3"
+        ivory_alt = "#F1F4F9"
+        text = "#17233B"
         row_frame = ctk.CTkFrame(self.group_columns_frame, fg_color="transparent")
         row_frame.grid(row=len(self.group_column_controls), column=0, pady=2, sticky="ew")
         row_frame.grid_columnconfigure(0, weight=1)
@@ -617,9 +619,9 @@ class ExcelSplitterApp(ctk.CTk):
                 command=lambda: self._remove_group_column(row_frame, variable),
                 width=78,
                 height=34,
-                fg_color="#D7D0C3",
-                hover_color="#B9AEA0",
-                text_color="#14353A",
+                fg_color="#DBE2EE",
+                hover_color="#CBD5E1",
+                text_color="#17233B",
             )
             remove_button.grid(row=0, column=1, padx=(8, 0))
         self.group_column_controls.append((row_frame, variable, dropdown, remove_button))
@@ -851,8 +853,8 @@ class ExcelSplitterApp(ctk.CTk):
             ctk.CTkLabel(self.groups_frame, text="No matching groups.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
             return
 
-        teal = "#12454B"
-        teal_dark = "#0C3035"
+        teal = "#4F46E5"
+        teal_dark = "#3730A3"
         for group_key, rows in ordered_groups[self.group_page * page_size:(self.group_page + 1) * page_size]:
             label = " - ".join(group_key)
             cb = ctk.CTkCheckBox(

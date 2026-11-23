@@ -17,21 +17,27 @@ class DuplicateRecordsDialog(ctk.CTkToplevel):
         self.title("Review duplicate records")
         self.geometry("950x650")
         self.minsize(650, 450)
+        self.configure(fg_color="#F4F6FB")
         self.transient(app)
         self.grab_set()
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
-        ctk.CTkLabel(self, text="Review possible duplicate records",
-                     font=ctk.CTkFont(size=18, weight="bold")).grid(
-                         row=0, column=0, padx=18, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(self, text="Review possible duplicate records", text_color="#17213B",
+                     font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold")).grid(
+                         row=0, column=0, padx=24, pady=(22, 4), sticky="w")
         ctk.CTkLabel(self, text="Select columns to compare. Text ignores case and extra spaces. Records with blank or missing matching fields are skipped. No records are removed or changed.",
+                     text_color="#64718A", font=ctk.CTkFont(family="Segoe UI", size=12),
                      wraplength=880, justify="left").grid(
-                         row=1, column=0, padx=18, pady=(0, 8), sticky="w")
+                         row=1, column=0, padx=24, pady=(0, 14), sticky="w")
         selection = ctk.CTkFrame(self, fg_color="transparent")
-        selection.grid(row=2, column=0, padx=18, sticky="ew")
+        selection.grid(row=2, column=0, padx=24, sticky="ew")
         selection.grid_columnconfigure(0, weight=1)
-        self.columns_list = tk.Listbox(selection, selectmode="multiple", exportselection=False, height=5)
+        self.columns_list = tk.Listbox(selection, selectmode="multiple", exportselection=False, height=5,
+                                       bg="#FFFFFF", fg="#17213B", selectbackground="#E4E7FF",
+                                       selectforeground="#312E81", font=("Segoe UI", 10),
+                                       relief="flat", highlightthickness=1, highlightbackground="#DCE2EE",
+                                       activestyle="none")
         self.columns_list.grid(row=0, column=0, sticky="ew")
         scroll = ttk.Scrollbar(selection, orient="vertical", command=self.columns_list.yview)
         scroll.grid(row=0, column=1, sticky="ns")
@@ -41,17 +47,27 @@ class DuplicateRecordsDialog(ctk.CTkToplevel):
         for index, column in enumerate(self.columns):
             if all(column in table.columns for _, table in self.tables):
                 self.columns_list.selection_set(index)
-        ctk.CTkButton(selection, text="Find matches", command=self.find_matches).grid(
+        ctk.CTkButton(selection, text="Find matches", command=self.find_matches, height=36,
+                      fg_color="#4F46E5", hover_color="#4338CA", corner_radius=9,
+                      font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).grid(
             row=0, column=2, padx=(12, 0), sticky="s")
         self.status = ctk.StringVar(value="Select matching columns, then find matches.")
-        ctk.CTkLabel(self, textvariable=self.status, anchor="w").grid(
-            row=3, column=0, padx=18, pady=8, sticky="ew")
+        ctk.CTkLabel(self, textvariable=self.status, anchor="w", text_color="#64718A",
+                     font=ctk.CTkFont(family="Segoe UI", size=12)).grid(
+            row=3, column=0, padx=24, pady=10, sticky="ew")
 
         result_frame = ctk.CTkFrame(self, fg_color="transparent")
-        result_frame.grid(row=4, column=0, padx=18, sticky="nsew")
+        result_frame.grid(row=4, column=0, padx=24, sticky="nsew")
         result_frame.grid_columnconfigure(0, weight=1)
         result_frame.grid_rowconfigure(0, weight=1)
-        self.results = ttk.Treeview(result_frame, columns=("match", "source", "row", "values"), show="headings")
+        style = ttk.Style(self)
+        style.configure("Review.Treeview", background="#FFFFFF", fieldbackground="#FFFFFF",
+                        foreground="#17213B", rowheight=28, font=("Segoe UI", 10))
+        style.configure("Review.Treeview.Heading", font=("Segoe UI", 10, "bold"), padding=(8, 7))
+        style.map("Review.Treeview", background=[("selected", "#E4E7FF")],
+                  foreground=[("selected", "#312E81")])
+        self.results = ttk.Treeview(result_frame, columns=("match", "source", "row", "values"),
+                                    show="headings", style="Review.Treeview")
         for column, title, width in (("match", "Match", 65), ("source", "Source", 230),
                                      ("row", "Loaded record", 100), ("values", "Record values", 480)):
             self.results.heading(column, text=title)
@@ -62,11 +78,15 @@ class DuplicateRecordsDialog(ctk.CTkToplevel):
         horizontal = ttk.Scrollbar(result_frame, orient="horizontal", command=self.results.xview)
         horizontal.grid(row=1, column=0, sticky="ew")
         self.results.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
-        self.details = tk.Text(self, height=6, wrap="word", state="disabled")
-        self.details.grid(row=5, column=0, padx=18, pady=(8, 0), sticky="ew")
+        self.details = tk.Text(self, height=6, wrap="word", state="disabled", bg="#FFFFFF",
+                               fg="#17213B", font=("Segoe UI", 10), padx=10, pady=8,
+                               relief="flat", highlightthickness=1, highlightbackground="#DCE2EE")
+        self.details.grid(row=5, column=0, padx=24, pady=(10, 0), sticky="ew")
         self.results.bind("<<TreeviewSelect>>", self._show_details)
-        ctk.CTkButton(self, text="Close", command=self.destroy).grid(
-            row=6, column=0, padx=18, pady=16, sticky="e")
+        ctk.CTkButton(self, text="Close", command=self.destroy, height=36, corner_radius=9,
+                      fg_color="#E7EAF3", hover_color="#DCE2EE", text_color="#26334D",
+                      font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).grid(
+            row=6, column=0, padx=24, pady=18, sticky="e")
 
     def find_matches(self):
         columns = [self.columns[index] for index in self.columns_list.curselection()]
