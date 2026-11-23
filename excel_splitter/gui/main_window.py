@@ -671,8 +671,6 @@ class ExcelSplitterApp(ctk.CTk):
             )
             remove_button.grid(row=0, column=1, padx=(8, 0))
         self.group_column_controls.append((row_frame, variable, dropdown, remove_button))
-        if remove_button is not None:
-            self.after_idle(self.group_columns_frame.master.yview_moveto, 1)
 
     def _remove_group_column(self, row_frame, variable):
         if len(self.group_column_controls) <= 1:

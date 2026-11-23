@@ -1,4 +1,4 @@
-"""Exercise desktop preferences and help through the menu commands."""
+"""Exercise desktop navigation and workspace layout."""
 
 import tkinter as tk
 from contextlib import contextmanager
@@ -85,6 +85,26 @@ def test_menu_opens_dialog(button, label, title):
     with launch_app() as app, patch.object(app, "wait_window", side_effect=check_dialog) as wait:
         invoke_menu(getattr(app, button), label)
         wait.assert_called_once()
+
+
+def test_adding_group_columns_keeps_list_scroll_position():
+    with launch_app() as app:
+        canvas = app.group_columns_frame.master
+        top = canvas.canvasy(0)
+
+        for _ in range(4):
+            app.add_column_button.invoke()
+            app.update()
+            assert canvas.canvasy(0) == top
+        assert len(app.group_column_controls) == 5
+
+        canvas.yview_scroll(1, "pages")
+        scrolled_position = canvas.canvasy(0)
+        assert scrolled_position > top
+
+        app.add_column_button.invoke()
+        app.update()
+        assert canvas.canvasy(0) == scrolled_position
 
 
 def test_review_tools_fit_at_minimum_window_size():
