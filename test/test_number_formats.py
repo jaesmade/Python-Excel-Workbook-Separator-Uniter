@@ -2,12 +2,20 @@
 
 from datetime import datetime
 
+import pandas as pd
 import pytest
 import xlrd
 import xlwt
 from openpyxl import Workbook, load_workbook
 
-from excel_splitter.core import ALL_SHEETS, _iter_input_tables, split_input_tables, split_workbooks
+from excel_splitter.core import (
+    ALL_SHEETS,
+    _iter_input_tables,
+    _normalize_input_tables,
+    build_group_map,
+    split_input_tables,
+    split_workbooks,
+)
 
 
 def _write_source(path, extension):
@@ -75,6 +83,40 @@ def _output_cells(path, extension):
                 cells.append((value, fmt))
             result.append(cells)
         return result
+
+
+@pytest.mark.parametrize("extension", ["xlsx", "xls"])
+def test_column_access_shares_immutable_number_formats(tmp_path, extension):
+    source = tmp_path / f"source.{extension}"
+    _write_source(source, extension)
+    tables = list(_iter_input_tables(str(source), ALL_SHEETS))
+    aligned_tables, _ = _normalize_input_tables(tables)
+
+    for _, table in [*tables, *aligned_tables]:
+        formats = table.attrs["number_formats"]
+        column = table.iloc[:, 0]
+        assert column.attrs["number_formats"] is formats
+        with pytest.raises(TypeError):
+            formats[0][0] = "0%"
+        with pytest.raises(TypeError):
+            formats[0] = ()
+
+
+def test_grouping_skips_deepcopy_of_legacy_list_formats():
+    class TrackedFormat(str):
+        def __deepcopy__(self, memo):
+            pytest.fail("Row iteration copied a legacy number format")
+
+    table = pd.DataFrame([("Sales", 123)], columns=["Department", "ID"])
+    formats = [["General", TrackedFormat("00000")]]
+    table.attrs["number_formats"] = formats
+
+    _, groups = build_group_map(table, "Department")
+
+    row, = groups[("Sales",)]
+    assert row == ("Sales", 123)
+    assert row.number_formats == ["General", "00000"]
+    assert table.attrs["number_formats"] is formats
 
 
 @pytest.mark.parametrize("input_extension", ["xlsx", "xls"])

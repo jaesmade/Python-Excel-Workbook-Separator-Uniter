@@ -32,6 +32,19 @@ class _ExcelError(str):
 _LEGACY_ERROR_CODES = {text: code for code, text in xlrd.error_text_from_code.items()}
 
 
+class _NumberFormats(tuple):
+    """Immutable rows of format strings shared by pandas attrs copies."""
+
+    __slots__ = ()
+
+    def __new__(cls, rows):
+        return super().__new__(cls, map(tuple, rows))
+
+    def __deepcopy__(self, memo):
+        # pandas copies attrs when itertuples selects each column.
+        return self
+
+
 class _FormattedRow(tuple):
     """A row of ordinary values with their source number formats attached."""
 
@@ -61,17 +74,17 @@ def _parse_excel_sheet(workbook, sheet_name):
         raw.iat[row, col] = _ExcelError(value)
     if workbook.engine == "xlrd":
         book = workbook.book
-        formats = [
-            [book.format_map[book.xf_list[sheet.cell_xf_index(row, col)].format_key].format_str
+        formats = (
+            (book.format_map[book.xf_list[sheet.cell_xf_index(row, col)].format_key].format_str
              if row < sheet.nrows and col < sheet.ncols else None
-             for col in range(raw.shape[1])]
+             for col in range(raw.shape[1]))
             for row in range(raw.shape[0])
-        ]
+        )
     else:
-        formats = [[getattr(cell, "number_format", None) for cell in row]
+        formats = ((getattr(cell, "number_format", None) for cell in row)
                    for row in sheet.iter_rows(min_row=1, max_row=raw.shape[0],
-                                              min_col=1, max_col=raw.shape[1])]
-    raw.attrs["number_formats"] = formats
+                                              min_col=1, max_col=raw.shape[1]))
+    raw.attrs["number_formats"] = _NumberFormats(formats)
     return raw
 
 
@@ -290,9 +303,18 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
         return _table_from_raw(raw, f"{os.path.basename(file_path)} - {name}")
 
 
+def _iter_table_values(table):
+    formats = table.attrs.get("number_formats")
+    if formats is not None and not isinstance(formats, _NumberFormats):
+        # Older callers may supply mutable format lists. A value-only view
+        # avoids copying them without modifying the caller's table.
+        table = pd.DataFrame(table, copy=False)
+    return table.itertuples(index=False, name=None)
+
+
 def _table_from_raw(raw: pd.DataFrame, source_label: str) -> pd.DataFrame:
     """Find the first populated row and validate its headers before naming columns."""
-    for header_index, row in enumerate(raw.itertuples(index=False, name=None)):
+    for header_index, row in enumerate(_iter_table_values(raw)):
         if _row_has_values(row):
             break
     else:
@@ -310,7 +332,7 @@ def _table_from_raw(raw: pd.DataFrame, source_label: str) -> pd.DataFrame:
     table.columns = headers
     table = table.reset_index(drop=True)
     if "number_formats" in raw.attrs:
-        table.attrs["number_formats"] = raw.attrs["number_formats"][data_start:]
+        table.attrs["number_formats"] = _NumberFormats(raw.attrs["number_formats"][data_start:])
     return table
 
 
@@ -366,7 +388,7 @@ def _normalize_input_tables(input_tables):
     seen_headers: set[str] = set()
 
     for source_name, table in input_tables:
-        if not any(_row_has_values(row) for row in table.itertuples(index=False, name=None)):
+        if not any(_row_has_values(row) for row in _iter_table_values(table)):
             continue
         normalized_table = table.copy()
         normalized_headers = detect_header_names(normalized_table.columns)
@@ -386,12 +408,14 @@ def _normalize_input_tables(input_tables):
     aligned_tables = []
     for source_name, table in tables:
         aligned = table.reindex(columns=headers)
-        if "number_formats" in table.attrs:
+        formats = table.attrs.get("number_formats")
+        if formats is not None and (not isinstance(formats, _NumberFormats) or list(table.columns) != headers):
             positions = {header: index for index, header in enumerate(table.columns)}
-            aligned.attrs["number_formats"] = [
-                [formats[positions[header]] if header in positions else None for header in headers]
-                for formats in table.attrs["number_formats"]
-            ]
+            aligned_positions = [positions.get(header) for header in headers]
+            aligned.attrs["number_formats"] = _NumberFormats(
+                (row[index] if index is not None else None for index in aligned_positions)
+                for row in formats
+            )
         aligned_tables.append((source_name, aligned))
     return aligned_tables, headers
 
@@ -405,7 +429,7 @@ def _ensure_python_value(value):
 def _iter_sheet_rows(sheet):
     if isinstance(sheet, pd.DataFrame):
         formats = sheet.attrs.get("number_formats")
-        for index, row in enumerate(sheet.itertuples(index=False, name=None)):
+        for index, row in enumerate(_iter_table_values(sheet)):
             yield _FormattedRow(row, formats[index]) if formats is not None else row
         return
 
