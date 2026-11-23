@@ -9,6 +9,10 @@ This application lets you select an Excel workbook, choose a worksheet, select o
 - Combine all worksheets across multiple uploaded workbooks; CSV files are treated as a single worksheet
 - Select one grouping column by default and add more grouping columns as needed
 - Preview all detected groups for the selected column combination
+- Review possible spelling and capitalization matches in selected grouping columns and choose whether to merge them
+- Review possible duplicate records by selected matching columns, with their sources and original values
+- Search for and manually merge any two grouping values, with an optional preferred name
+- Optionally write chosen merge spellings into exported grouping cells
 - Preview selected output worksheets by name and inspect their table rows before generating the workbook
 - Sort detected groups alphabetically or by record count
 - Browse detected groups in pages, keeping selections when changing pages or sort order
@@ -70,8 +74,18 @@ Worksheets containing formulas are rejected because splitting can change cell re
 
 Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. This is the default for workbooks containing multiple worksheets and for multiple uploaded files. Different worksheets and files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and blank rows are skipped.
 
+Click **Review duplicate records** to compare records in the selected worksheets. Choose one or more matching columns and click **Find matches**; columns shared by all selected sources are selected initially. Text matching ignores capitalization and extra whitespace, and records with a blank or missing matching value are skipped. Results show each matching record, source, and position in the loaded table (which may differ from the original file line when blank lines are skipped); select a result to inspect its values. This review does not remove or change records and is independent of **Combine duplicate groups**.
+
 With `Combine duplicate groups` enabled, matching groups from different worksheets or files are merged. Disable it to keep each source worksheet's groups separate. The preview includes the source workbook and worksheet names, and selected preview groups are used for export. Loaded worksheets are cached for both preview and export; reload a file to pick up changes made after it was opened.
 
 Detected groups can be sorted alphabetically, by record count ascending, or by record count descending. The selected order is also used for the generated worksheets.
 
 Generated `.xlsx` worksheets include filterable Excel tables using `TableStyleMedium2`, 31-point header rows, and 23-point data rows. Known attendance columns use widths matched by header name, so reordered columns keep the appropriate width. Other columns fit their contents up to a readable maximum. Legacy `.xls` exports use equivalent cell colors, fonts, row heights, and frozen panes.
+
+## Review spelling suggestions
+
+After selecting the grouping columns (for example, add `ID Number`), click **Review spelling**. The app lists possible matches for all selected columns, with the record count for each spelling. Choose either spelling for a combined group or keep each pair separate. Use **Undo last choice** to reverse decisions, then apply your choices or cancel the review. You can reopen the review to undo applied choices while the grouping and group selection are unchanged. Suggestions are based on similarity, so review each one before accepting it; only values already present in the selected data are suggested. Numeric and alphanumeric identifiers are excluded.
+
+Approved choices apply to the group preview and generated worksheet names for the current worksheet selection. By default, exported rows retain their original cell values. Select **Correct merged values in output** to write the chosen spelling into the corresponding grouping cells in the generated workbook. Other cells remain unchanged. Applied spelling choices are saved locally for the same grouping column and reused in future workbooks, even when the preferred spelling is absent. Click **Saved spellings** to review or remove them; removal affects future workbooks. Undoing an applied choice and applying the review also removes that saved choice. Manual merges remain limited to the current worksheet selection.
+
+To merge values that are not suggested, click **Manual merge**, choose the grouping column, and search for and select one value in each list. Enter a preferred name if needed, or leave it blank to use the first value, then click **Merge**. To use an existing value as the preferred name, select it as one of the two values. These merges also honor **Correct merged values in output**; the input files are not modified.

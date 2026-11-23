@@ -22,11 +22,225 @@ from excel_splitter.core import (
     _iter_input_tables,
     _normalize_input_tables,
     build_combined_group_map,
+    ensure_output_is_not_input,
+    merge_group_values,
     preview_group_items,
     sort_group_items,
     split_input_tables,
     source_file_labels,
 )
+
+
+from excel_splitter.spelling_review import KEEP_SEPARATE, SpellingReview
+from excel_splitter.manual_merge import category_values, merge_categories
+from excel_splitter.saved_spellings import SavedSpellings
+from excel_splitter.gui.saved_spellings_dialog import SavedSpellingsDialog
+from excel_splitter.gui.duplicate_records_dialog import DuplicateRecordsDialog
+
+
+class ManualMergeDialog(ctk.CTkToplevel):
+    """Search two values in one grouping column and merge them."""
+
+    def __init__(self, app, columns):
+        super().__init__(app)
+        self.app = app
+        self.columns = tuple(columns)
+        self.title("Manually merge categories")
+        self.geometry("720x570")
+        self.minsize(560, 450)
+        self.transient(app)
+        self.grab_set()
+        self.grid_columnconfigure((0, 1), weight=1)
+        self.grid_rowconfigure(3, weight=1)
+
+        ctk.CTkLabel(self, text="Manually merge categories",
+                     font=ctk.CTkFont(size=18, weight="bold")).grid(
+                         row=0, column=0, columnspan=2, padx=18, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(self, text="Select a column and search for two values. The source stays unchanged; export can optionally correct merged values.",
+                     wraplength=670, justify="left").grid(
+                         row=1, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="w")
+        self.column_var = ctk.StringVar(value=self.columns[0])
+        ctk.CTkOptionMenu(self, values=list(self.columns), variable=self.column_var,
+                          command=self._column_changed).grid(
+                              row=2, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="ew")
+        self.search_vars = []
+        self.value_lists = []
+        for index, label in enumerate(("First value", "Second value")):
+            frame = ctk.CTkFrame(self)
+            frame.grid(row=3, column=index, padx=(18 if index == 0 else 6, 18 if index == 1 else 6),
+                       pady=4, sticky="nsew")
+            frame.grid_columnconfigure(0, weight=1)
+            frame.grid_rowconfigure(2, weight=1)
+            ctk.CTkLabel(frame, text=label, anchor="w").grid(row=0, column=0, padx=8, pady=(8, 2), sticky="ew")
+            search = ctk.StringVar(value="")
+            self.search_vars.append(search)
+            ctk.CTkEntry(frame, textvariable=search, placeholder_text="Search values").grid(
+                row=1, column=0, padx=8, pady=(0, 6), sticky="ew")
+            values = tk.Listbox(frame, exportselection=False, selectmode="browse", font=("Arial", 11))
+            values.grid(row=2, column=0, padx=(8, 0), sticky="nsew")
+            scroll = ttk.Scrollbar(frame, orient="vertical", command=values.yview)
+            scroll.grid(row=2, column=1, padx=(0, 8), sticky="ns")
+            horizontal_scroll = ttk.Scrollbar(frame, orient="horizontal", command=values.xview)
+            horizontal_scroll.grid(row=3, column=0, padx=(8, 0), pady=(0, 8), sticky="ew")
+            values.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal_scroll.set)
+            self.value_lists.append(values)
+            search.trace_add("write", lambda *_args, i=index: self._refresh_values(i))
+
+        ctk.CTkLabel(self, text="Preferred name (optional; defaults to the first value)", anchor="w").grid(
+            row=4, column=0, columnspan=2, padx=18, pady=(8, 2), sticky="ew")
+        self.preferred_var = ctk.StringVar(value="")
+        ctk.CTkEntry(self, textvariable=self.preferred_var).grid(
+            row=5, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="ew")
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=6, column=0, columnspan=2, padx=18, pady=(0, 16), sticky="ew")
+        ctk.CTkButton(footer, text="Cancel", command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(footer, text="Merge", command=self._merge).pack(side="right")
+        self._column_changed()
+
+    def _column_changed(self, _value=None):
+        for index in range(2):
+            self._refresh_values(index)
+
+    def _refresh_values(self, index):
+        values = category_values(self.app.groups, self.columns, self.column_var.get(), self.search_vars[index].get())
+        box = self.value_lists[index]
+        box.delete(0, tk.END)
+        for value in values:
+            box.insert(tk.END, value)
+
+    def _merge(self):
+        selected = [box.curselection() for box in self.value_lists]
+        if not all(selected):
+            messagebox.showinfo("Manual merge", "Select one value from each list.", parent=self)
+            return
+        first, second = (box.get(selection[0]) for box, selection in zip(self.value_lists, selected))
+        preferred = self.preferred_var.get().strip() or first
+        try:
+            groups, mappings, selected_groups = merge_categories(
+                self.app.groups, self.columns, self.app.value_mappings, self.app.selected_group_keys,
+                self.column_var.get(), first, second, preferred)
+        except ValueError as exc:
+            messagebox.showinfo("Manual merge", str(exc), parent=self)
+            return
+        self.app.groups = groups
+        self.app.value_mappings = mappings
+        self.app._last_spelling_review = None
+        self.app.group_page = 0
+        self.app._render_groups(selected_groups)
+        count = sum(len(rows) for rows in groups.values())
+        self.app.progress_var.set(f"{len(groups)} groups detected from {count:,} records.")
+        self.destroy()
+
+
+class SpellingReviewDialog(ctk.CTkToplevel):
+    """Review all suggested pairs before applying the chosen merges."""
+
+    def __init__(self, app, review):
+        super().__init__(app)
+        self.app = app
+        self.review = review
+        self.title("Review spelling")
+        self.geometry("760x620")
+        self.minsize(620, 400)
+        self.transient(app)
+        self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(self, text="Review spelling suggestions",
+                     font=ctk.CTkFont(size=18, weight="bold")).grid(row=0, column=0, padx=18, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(self, text="Choose a spelling to merge each pair, or keep it separate. The source stays unchanged; export can optionally correct merged values.",
+                     wraplength=700, justify="left").grid(row=1, column=0, padx=18, pady=(0, 8), sticky="w")
+        self.list_frame = ctk.CTkScrollableFrame(self)
+        self.list_frame.grid(row=2, column=0, padx=18, pady=4, sticky="nsew")
+        self.list_frame.grid_columnconfigure(0, weight=1)
+        self.suggestion_rows = []
+        self._row_controls = []
+        for index, (column, source, target, source_count, target_count) in enumerate(self.review.suggestions):
+            row = ctk.CTkFrame(self.list_frame)
+            row.grid(row=index, column=0, padx=4, pady=5, sticky="ew")
+            row.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(row, text=column, font=ctk.CTkFont(weight="bold"), anchor="w").grid(
+                row=0, column=0, padx=12, pady=(8, 2), sticky="ew")
+            ctk.CTkLabel(row, text=f'First: "{source}" ({source_count:,} records)\nSecond: "{target}" ({target_count:,} records)',
+                         anchor="w", justify="left", wraplength=650).grid(row=1, column=0, padx=12, sticky="ew")
+            buttons = ctk.CTkFrame(row, fg_color="transparent")
+            buttons.grid(row=2, column=0, padx=8, pady=(6, 8), sticky="w")
+            controls = []
+            for text, choice in (("Use first", source), ("Use second", target), ("Keep separate", KEEP_SEPARATE)):
+                button = ctk.CTkButton(buttons, text=text, width=120,
+                                       command=lambda i=index, value=choice: self._choose(i, value))
+                button.pack(side="left", padx=4)
+                controls.append(button)
+            status = ctk.CTkLabel(row, text="Awaiting choice", anchor="w")
+            status.grid(row=3, column=0, padx=12, pady=(0, 8), sticky="ew")
+            self.suggestion_rows.append(row)
+            self._row_controls.append((controls, status))
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=3, column=0, padx=18, pady=(8, 16), sticky="ew")
+        self.undo_button = ctk.CTkButton(footer, text="Undo last choice", command=self._undo, state="disabled")
+        self.undo_button.pack(side="left")
+        ctk.CTkButton(footer, text="Cancel", command=self.destroy).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(footer, text="Apply choices", command=self._apply).pack(side="right")
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._refresh_choices()
+
+    def _refresh_choices(self):
+        for index, (controls, status) in enumerate(self._row_controls):
+            answer = self.review.decisions.get(index)
+            for button in controls:
+                button.configure(state="disabled" if answer is not None else "normal")
+            if answer is KEEP_SEPARATE:
+                label = "Keeping separate"
+            elif answer is not None:
+                column = self.review.suggestions[index][0]
+                label = f'Merged as "{self.review.current_value(column, answer)}"'
+            else:
+                label = "Awaiting choice"
+            status.configure(text=label)
+        self.undo_button.configure(state="normal" if self.review.can_undo else "disabled")
+
+    def _choose(self, index, answer):
+        try:
+            self.review.choose(index, answer)
+        except ValueError as exc:
+            messagebox.showinfo("Review spelling", str(exc), parent=self)
+            return
+        self._refresh_choices()
+
+    def _undo(self):
+        self.review.undo()
+        self._refresh_choices()
+
+    def _apply(self):
+        def approved(review):
+            if review is None or not review._history:
+                return {}
+            initial = review._history[0][2]
+            return {key: value for key, value in review.mappings.items()
+                    if initial.get(key) != value}
+
+        previous = approved(self.app._last_spelling_review)
+        current = approved(self.review)
+        additions = {key: value for key, value in current.items()
+                     if previous.get(key) != value}
+        try:
+            stored = self.app.saved_spellings.load()
+            removals = [key for key, value in previous.items()
+                        if key not in current and stored.get(key) == value]
+            if additions or removals:
+                self.app.saved_spellings.update(additions, removals)
+        except (OSError, ValueError) as exc:
+            messagebox.showwarning("Saved spellings", f"Choices could not be saved for future workbooks: {exc}", parent=self)
+        self.app.groups = self.review.groups
+        self.app.value_mappings = self.review.mappings
+        self.app._last_spelling_review = self.review
+        self.app.group_page = 0
+        self.app._render_groups(self.review.selected)
+        count = sum(len(rows) for rows in self.app.groups.values())
+        self.app.progress_var.set(f"{len(self.app.groups)} groups detected from {count:,} records.")
+        self.destroy()
 
 
 class ExcelSplitterApp(ctk.CTk):
@@ -52,6 +266,9 @@ class ExcelSplitterApp(ctk.CTk):
         self.selected_group_keys = set()
         self.group_page = 0
         self.group_column_controls = []
+        self.value_mappings = {}
+        self._last_spelling_review = None
+        self.saved_spellings = SavedSpellings()
 
         self._build_ui()
 
@@ -144,7 +361,33 @@ class ExcelSplitterApp(ctk.CTk):
             text_color=text,
             border_color=teal,
         )
-        self.combine_duplicates_checkbox.grid(row=3, column=0, columnspan=3, padx=(18, 18), pady=(8, 16), sticky="w")
+        self.combine_duplicates_checkbox.grid(row=3, column=0, padx=(18, 18), pady=(8, 16), sticky="w")
+        merge_actions = ctk.CTkFrame(top, fg_color="transparent")
+        merge_actions.grid(row=3, column=1, columnspan=2, padx=(0, 18), pady=(8, 16), sticky="e")
+        ctk.CTkButton(
+            merge_actions, text="Review spelling", command=self.review_spelling_suggestions,
+            width=130, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            merge_actions, text="Manual merge", command=self.manual_merge_categories,
+            width=130, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            merge_actions, text="Saved spellings", command=self.manage_saved_spellings,
+            width=130, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            top, text="Review duplicate records", command=self.review_duplicate_records,
+            width=190, height=34, fg_color=teal, hover_color=teal_dark, text_color=ivory,
+        ).grid(row=4, column=1, columnspan=2, padx=(0, 18), pady=(0, 12), sticky="e")
+
+        self.correct_merged_values_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            top, text="Correct merged values in output",
+            variable=self.correct_merged_values_var, onvalue=True, offvalue=False,
+            fg_color=teal, hover_color=teal_mid, text_color=text, border_color=teal,
+        ).grid(row=4, column=0, padx=(18, 18), pady=(0, 16), sticky="w")
 
         body = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
@@ -206,6 +449,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.group_next = ctk.CTkButton(group_pages, text="Next", width=90, command=lambda: self._change_group_page(1))
         self.group_next.pack(side="left")
         self.group_next.configure(state="disabled")
+        self.group_search_var.trace_add("write", self._on_group_search_changed)
 
         bottom = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
         bottom.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
@@ -246,7 +490,11 @@ class ExcelSplitterApp(ctk.CTk):
             messagebox.showinfo("Preview worksheets", "Select at least one detected group to preview.")
             return
 
-        items = preview_group_items(self.groups, selected_groups, self._selected_sort_mode())
+        items = preview_group_items(
+            self.groups, selected_groups, self._selected_sort_mode(), headers=self.headers,
+            grouping_columns=self._selected_group_columns(), value_mappings=self.value_mappings,
+            correct_merged_values=self.correct_merged_values_var.get(),
+        )
         if not items:
             messagebox.showinfo("Preview worksheets", "There are no selected worksheets to preview.")
             return
@@ -474,6 +722,8 @@ class ExcelSplitterApp(ctk.CTk):
             self._clear_worksheet_selection()
 
     def _clear_worksheet_selection(self):
+        self._last_spelling_review = None
+        self.value_mappings = {}
         self.selected_sheet_name = None
         self.headers = []
         self.groups = {}
@@ -488,6 +738,12 @@ class ExcelSplitterApp(ctk.CTk):
         if not sheet_name or not self.file_paths:
             return False
 
+        self._last_spelling_review = None
+        try:
+            self.value_mappings = self.saved_spellings.load()
+        except (OSError, ValueError) as exc:
+            self.value_mappings = {}
+            messagebox.showwarning("Saved spellings", f"Saved choices could not be loaded: {exc}", parent=self)
         self.selected_sheet_name = self.sheet_options.get(sheet_name, sheet_name)
         try:
             tables = self._selected_tables()
@@ -572,7 +828,6 @@ class ExcelSplitterApp(ctk.CTk):
         self.group_page_var.set("")
         self.group_previous.configure(state="disabled")
         self.group_next.configure(state="disabled")
-        self.group_search_var.trace_add("write", self._on_group_search_changed)
 
     def _render_groups(self, selected_groups=None):
         self._clear_group_list()
@@ -617,6 +872,7 @@ class ExcelSplitterApp(ctk.CTk):
             self.group_checkboxes[group_key] = cb
 
     def _populate_groups(self):
+        self._last_spelling_review = None
         self._clear_group_list()
         self.groups = {}
         self.selected_group_keys = set()
@@ -636,6 +892,7 @@ class ExcelSplitterApp(ctk.CTk):
                 grouping_columns=grouping_columns,
                 combine_duplicates=self.combine_duplicates_var.get(),
             )
+            self.groups = merge_group_values(self.groups, grouping_columns, self.value_mappings)
             self.group_page = 0
             self._render_groups()
             record_count = sum(len(rows) for rows in self.groups.values())
@@ -647,6 +904,49 @@ class ExcelSplitterApp(ctk.CTk):
             ctk.CTkLabel(self.groups_frame, text=f"Unable to detect groups: {exc}", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
             self.progress_var.set("Worksheet could not be processed.")
             return False
+
+    def review_duplicate_records(self):
+        if not self.selected_sheet_name or not self.headers:
+            messagebox.showinfo("Review duplicate records", "Select a worksheet first.")
+            return
+        window = DuplicateRecordsDialog(self, self._selected_tables(), self.headers)
+        self.wait_window(window)
+
+    def review_spelling_suggestions(self):
+        """Review similar grouping values together before applying choices."""
+        if not self.groups:
+            messagebox.showinfo("Review spelling", "Select a worksheet and grouping columns first.")
+            return
+        columns = self._selected_group_columns()
+        review = self._last_spelling_review
+        if (review is None or review.columns != tuple(columns) or review.groups != self.groups
+                or review.mappings != self.value_mappings or review.selected != self.selected_group_keys):
+            review = SpellingReview(self.groups, columns, self.value_mappings, self.selected_group_keys)
+        else:
+            review = review.copy()
+        if not review.suggestions:
+            messagebox.showinfo("Review spelling", "No similar grouping values were found.")
+            return
+        self._review_spelling_list(review)
+
+    def _review_spelling_list(self, review):
+        window = SpellingReviewDialog(self, review)
+        self.wait_window(window)
+
+    def manage_saved_spellings(self):
+        try:
+            window = SavedSpellingsDialog(self, self.saved_spellings)
+        except (OSError, ValueError) as exc:
+            messagebox.showwarning("Saved spellings", f"Saved choices could not be loaded: {exc}", parent=self)
+            return
+        self.wait_window(window)
+
+    def manual_merge_categories(self):
+        if not self.groups:
+            messagebox.showinfo("Manual merge", "Select a worksheet and grouping columns first.")
+            return
+        window = ManualMergeDialog(self, self._selected_group_columns())
+        self.wait_window(window)
 
     def start_generation(self):
         if not self.file_paths:
@@ -670,19 +970,23 @@ class ExcelSplitterApp(ctk.CTk):
         self.update_idletasks()
 
         input_tables = self._selected_tables()
-        source_file = self.file_paths[0]
+        source_files = tuple(self.file_paths)
+        source_file = source_files[0]
         combine_duplicates = self.combine_duplicates_var.get()
+        value_mappings = dict(self.value_mappings)
+        correct_merged_values = self.correct_merged_values_var.get()
         updates = queue.Queue()
         thread = threading.Thread(
             target=self._generate_workbook,
             args=(input_tables, tuple(grouping_columns), selected_groups,
-                  combine_duplicates, self._selected_sort_mode(), source_file, updates),
+                  combine_duplicates, self._selected_sort_mode(), source_file, updates, value_mappings,
+                  correct_merged_values, source_files),
             daemon=True,
         )
         thread.start()
         self.after(50, self._poll_generation, updates)
 
-    def _generate_workbook(self, input_tables, grouping_columns, selected_groups, combine_duplicates, sort_mode, source_file, updates):
+    def _generate_workbook(self, input_tables, grouping_columns, selected_groups, combine_duplicates, sort_mode, source_file, updates, value_mappings=None, correct_merged_values=False, source_files=()):
         temporary_path = None
         try:
             temporary_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -702,11 +1006,13 @@ class ExcelSplitterApp(ctk.CTk):
                 combine_duplicates=combine_duplicates,
                 grouping_columns=grouping_columns,
                 sort_mode=sort_mode,
+                value_mappings=value_mappings,
+                correct_merged_values=correct_merged_values,
             )
 
             created = result.get("created_sheets", 0)
             processed = result.get("processed_rows", 0)
-            updates.put(("complete", temporary_path, created, processed, source_file))
+            updates.put(("complete", temporary_path, created, processed, source_file, source_files))
             temporary_path = None
         except Exception as exc:
             if temporary_path and os.path.exists(temporary_path):
@@ -729,15 +1035,27 @@ class ExcelSplitterApp(ctk.CTk):
         except queue.Empty:
             self.after(50, self._poll_generation, updates)
 
-    def _save_completed_workbook(self, temporary_path, created, processed, source_file):
+    def _save_completed_workbook(self, temporary_path, created, processed, source_file, source_files=()):
+        staging_path = None
+        discard_generated = False
         try:
             output_path = self.choose_output_location(source_file)
             if not output_path:
+                discard_generated = True
                 self.progress_var.set("Workbook generated but not saved.")
                 self.progress_bar.set(0)
                 return
 
-            shutil.copyfile(temporary_path, output_path)
+            ensure_output_is_not_input(output_path, (*source_files, *self.file_paths))
+            staging_file = tempfile.NamedTemporaryFile(
+                suffix=".xlsx", dir=os.path.dirname(os.path.abspath(output_path)), delete=False
+            )
+            staging_path = staging_file.name
+            staging_file.close()
+            shutil.copyfile(temporary_path, staging_path)
+            os.replace(staging_path, output_path)
+            staging_path = None
+            discard_generated = True
             message = (
                 "Workbook successfully created!\n\n"
                 f"{created} worksheets created\n"
@@ -748,9 +1066,16 @@ class ExcelSplitterApp(ctk.CTk):
             self.progress_var.set("Completed successfully.")
             self.progress_bar.set(1)
         except Exception as exc:
-            self._generation_failed(exc)
+            if discard_generated:
+                self._generation_failed(exc)
+            else:
+                self._generation_failed(RuntimeError(
+                    f"{exc}\n\nThe generated workbook was retained at:\n{temporary_path}"
+                ))
         finally:
-            if os.path.exists(temporary_path):
+            if staging_path and os.path.exists(staging_path):
+                os.remove(staging_path)
+            if discard_generated and os.path.exists(temporary_path):
                 os.remove(temporary_path)
             self.generate_btn.configure(state="normal")
 

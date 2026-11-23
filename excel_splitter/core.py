@@ -4,6 +4,7 @@ import os
 from collections import Counter
 from datetime import date
 from collections import OrderedDict
+from difflib import SequenceMatcher
 from typing import Callable
 from itertools import chain
 
@@ -71,10 +72,85 @@ def _parse_excel_sheet(workbook, sheet_name):
     return raw
 
 
+def ensure_output_is_not_input(output_path, input_paths):
+    """Reject output paths that refer to a loaded source, including aliases."""
+    output_real = os.path.normcase(os.path.realpath(output_path))
+    for input_path in input_paths:
+        same_path = output_real == os.path.normcase(os.path.realpath(input_path))
+        if not same_path and os.path.exists(output_path) and os.path.exists(input_path):
+            same_path = os.path.samefile(output_path, input_path)
+        if same_path:
+            raise WorkbookProcessingError("Choose a different output file to avoid overwriting an input file.")
+
+
 ALL_SHEETS = "__ALL_SHEETS__"
 SORT_ALPHABETICAL = "alphabetical"
 SORT_COUNT_ASCENDING = "count_ascending"
 SORT_COUNT_DESCENDING = "count_descending"
+
+
+def _similar_group_values(first: str, second: str) -> bool:
+    """Find small spelling differences without treating IDs as words."""
+    first = " ".join(first.casefold().split())
+    second = " ".join(second.casefold().split())
+    if first == second:
+        return True
+    if min(len(first), len(second)) < 4 or abs(len(first) - len(second)) > 2:
+        return False
+    if SequenceMatcher(None, first, second).ratio() < 0.84:
+        return False
+
+    # Bounded Levenshtein distance: reject longer differences even when a
+    # long shared prefix would otherwise make the ratio look convincing.
+    previous = list(range(len(second) + 1))
+    for index, char in enumerate(first, 1):
+        current = [index]
+        for other_index, other in enumerate(second, 1):
+            current.append(min(current[-1] + 1, previous[other_index] + 1,
+                               previous[other_index - 1] + (char != other)))
+        previous = current
+    return previous[-1] <= 2
+
+
+def suggest_group_value_merges(groups, grouping_columns):
+    """Suggest existing similar values; the caller must approve every merge.
+
+    Counts represent records across all groups for each selected column. The
+    most common spelling is proposed as the target, with stable tie-breaking.
+    """
+    suggestions = []
+    for index, column in enumerate(grouping_columns):
+        counts = Counter()
+        for key, rows in groups.items():
+            value = key[index]
+            if (value.casefold() != "unknown group" and any(c.isalpha() for c in value)
+                    and not any(c.isdigit() for c in value)):
+                counts[value] += len(rows)
+        ranked = sorted(counts, key=lambda value: (-counts[value], value.casefold(), value))
+        for position, source in enumerate(ranked):
+            candidates = [target for target in ranked[:position] if _similar_group_values(source, target)]
+            if candidates:
+                target = candidates[0]
+                suggestions.append((column, source, target, counts[source], counts[target]))
+    return suggestions
+
+
+def merge_group_values(groups, grouping_columns, mappings):
+    """Apply approved value replacements to keys, leaving source rows intact."""
+    merged = OrderedDict()
+    for key, rows in groups.items():
+        parts = list(key)
+        for index, column in enumerate(grouping_columns):
+            value = parts[index]
+            seen = set()
+            while (column, value) in mappings:
+                if value in seen:
+                    raise WorkbookProcessingError("Value merge choices contain a cycle.")
+                seen.add(value)
+                value = mappings[(column, value)]
+            parts[index] = value
+        merged.setdefault(tuple(parts), []).extend(rows)
+    return merged
 
 
 def sort_group_items(groups, sort_mode: str = SORT_ALPHABETICAL):
@@ -86,14 +162,35 @@ def sort_group_items(groups, sort_mode: str = SORT_ALPHABETICAL):
     return sorted(items, key=lambda item: " - ".join(item[0]).casefold())
 
 
-def preview_group_items(groups, selected_groups, sort_mode: str = SORT_ALPHABETICAL):
-    """Return selected groups with the worksheet names used for export."""
+def preview_group_items(groups, selected_groups, sort_mode: str = SORT_ALPHABETICAL,
+                        *, headers=None, grouping_columns=None, value_mappings=None,
+                        correct_merged_values: bool = False):
+    """Return selected worksheets and the rows that will be exported."""
     used_names = SheetNameRegistry()
-    return [
+    items = [
         (sanitize_sheet_name(" - ".join(key), used_names), key, rows)
         for key, rows in sort_group_items(groups, sort_mode)
         if key in selected_groups
     ]
+    if not correct_merged_values or not value_mappings:
+        return items
+
+    columns = [str(column).strip() for column in grouping_columns if str(column).strip()]
+    indexes = [headers.index(column) for column in columns]
+    merge_targets = {(column, target) for (column, _), target in value_mappings.items()}
+    corrected_groups = []
+    for title, key, rows in items:
+        corrected_rows = []
+        for row in rows:
+            values = list(row)
+            for group_index, (column, cell_index) in enumerate(zip(columns, indexes)):
+                value = normalize_group_value(_ensure_python_value(values[cell_index]), "UNKNOWN GROUP")
+                if (column, value) in value_mappings or (column, value) in merge_targets:
+                    values[cell_index] = key[group_index]
+            formats = getattr(row, "number_formats", None)
+            corrected_rows.append(_FormattedRow(values, formats) if formats is not None else tuple(values))
+        corrected_groups.append((title, key, corrected_rows))
+    return corrected_groups
 
 
 def _select_excel_engine(file_path: str) -> str | None:
@@ -377,6 +474,7 @@ def split_workbooks(file_paths: list[str], sheet_name: str, department_column: s
                     sort_mode: str = SORT_ALPHABETICAL):
     if not file_paths:
         raise WorkbookProcessingError("No files were selected for processing.")
+    ensure_output_is_not_input(output_file, file_paths)
 
     total_files = len(file_paths)
     input_tables = []
@@ -399,11 +497,17 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                        output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                        progress_callback: Callable[[int, str], None] | None = None,
                        combine_duplicates: bool = True, grouping_columns: list[str] | None = None,
-                       sort_mode: str = SORT_ALPHABETICAL):
+                       sort_mode: str = SORT_ALPHABETICAL, value_mappings=None,
+                       correct_merged_values: bool = False):
     """Export an already-loaded set of tables, preserving the preview snapshot."""
     combined_headers, combined_groups = build_combined_group_map(
         input_tables, department_column, id_number_column, grouping_columns, combine_duplicates
     )
+    if value_mappings:
+        effective_columns = grouping_columns if grouping_columns is not None else [department_column] + (
+            [id_number_column] if id_number_column else []
+        )
+        combined_groups = merge_group_values(combined_groups, effective_columns, value_mappings)
 
     if selected_groups is None:
         selected_groups = set(combined_groups.keys())
@@ -415,7 +519,11 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
 
     output_ext = os.path.splitext(output_file)[1].lower()
     processed_rows = 0
-    ordered_groups = preview_group_items(combined_groups, selected_groups, sort_mode)
+    ordered_groups = preview_group_items(
+        combined_groups, selected_groups, sort_mode, headers=combined_headers,
+        grouping_columns=effective_columns if value_mappings else None,
+        value_mappings=value_mappings, correct_merged_values=correct_merged_values,
+    )
     total_groups = len(ordered_groups)
 
     # Both Excel formats limit cell text to 32,767 characters. openpyxl

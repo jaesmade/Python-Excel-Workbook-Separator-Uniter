@@ -17,6 +17,7 @@ import xlrd
 import xlwt
 from openpyxl import Workbook, load_workbook
 
+from excel_splitter.saved_spellings import SavedSpellings
 from excel_splitter.core import (
     ALL_SHEETS,
     WorkbookProcessingError,
@@ -82,6 +83,7 @@ class MultiSheetWorkbookTests(unittest.TestCase):
         app = SimpleNamespace(
             file_paths=sources, file_path=None, workbook={}, input_tables=[],
             sheet_options={}, selected_sheet_name=None, headers=[], groups={},
+            saved_spellings=SavedSpellings(self.folder / "saved-spellings.json"),
             progress_var=Variable(), progress_bar=Mock(), sheet_var=Variable(),
             sheet_dropdown=Mock(), update_idletasks=Mock(),
             group_column_controls=[(None, Variable(""), Mock(), None)],
