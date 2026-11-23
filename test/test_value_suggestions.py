@@ -3,6 +3,7 @@ from collections import OrderedDict
 import pandas as pd
 from openpyxl import load_workbook
 
+from excel_splitter import core
 from excel_splitter.core import (
     build_combined_group_map,
     merge_group_values,
@@ -30,6 +31,48 @@ def test_suggestions_find_typos_and_capitalization_but_ignore_numeric_ids():
     assert ("ID Number", "labor payroll", "LABOR PAYROLL") in pairs
     assert all(not source.isdigit() and not target.isdigit() for _, source, target in pairs)
     assert all(source != "UNKNOWN GROUP" and target != "UNKNOWN GROUP" for _, source, target in pairs)
+
+
+def test_suggestions_skip_unrelated_labels_and_stop_at_the_first_ranked_match(monkeypatch):
+    groups = {
+        ("ZZZZZZZZZZZZZ",): [()] * 5,
+        ("  ABXDEFYHIJKLM ",): [()] * 4,
+        ("ABCDEFGHIJLKM",): [()] * 3,
+        ("abcdefghijklm",): [()] * 2,
+        ("ABCDEFGHIJKLM",): [()],
+    }
+    compared = []
+    similar_group_values = core._similar_group_values
+
+    def record_comparison(source, target):
+        if source.casefold() == "abcdefghijklm":
+            compared.append(" ".join(target.casefold().split()))
+        return similar_group_values(source, target)
+
+    monkeypatch.setattr(core, "_similar_group_values", record_comparison)
+
+    suggestions = suggest_group_value_merges(groups, ["Name"])
+
+    assert suggestions[-2:] == [
+        ("Name", "abcdefghijklm", "  ABXDEFYHIJKLM ", 2, 4),
+        ("Name", "ABCDEFGHIJKLM", "  ABXDEFYHIJKLM ", 1, 4),
+    ]
+    assert compared == ["abxdefyhijklm", "abxdefyhijklm"]
+
+
+def test_suggestions_allow_two_edits_and_match_short_normalized_duplicates():
+    groups = {
+        ("ABCDEFGHIJKLMNOPQRSTUVW",): [()] * 5,
+        ("ABXCDEFGHIZKLMNOPQRSTUVW",): [()] * 4,
+        ("ABCDEFGHIJKLMNOPQRSTXYZ",): [()] * 3,
+        (" A  B ",): [()] * 2,
+        ("a b",): [()],
+    }
+
+    assert suggest_group_value_merges(groups, ["Name"]) == [
+        ("Name", "ABXCDEFGHIZKLMNOPQRSTUVW", "ABCDEFGHIJKLMNOPQRSTUVW", 4, 5),
+        ("Name", "a b", " A  B ", 1, 2),
+    ]
 
 
 def test_approved_mapping_merges_group_keys_without_modifying_rows_or_source_labels():

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 from codecs import BOM_UTF8
-from collections import Counter
+from collections import Counter, OrderedDict, defaultdict
 from datetime import date
-from collections import OrderedDict
 from difflib import SequenceMatcher
 from enum import Enum, auto
+from heapq import merge
+from itertools import chain, groupby
 from numbers import Real
 from typing import Callable
-from itertools import chain
 
 import pandas as pd
 import xlrd
@@ -109,27 +109,49 @@ SORT_COUNT_ASCENDING = "count_ascending"
 SORT_COUNT_DESCENDING = "count_descending"
 
 
-def _similar_group_values(first: str, second: str) -> bool:
-    """Find small spelling differences without treating IDs as words."""
-    first = " ".join(first.casefold().split())
-    second = " ".join(second.casefold().split())
+def _within_edit_distance(first: str, second: str, edits: int) -> bool:
     if first == second:
         return True
-    if min(len(first), len(second)) < 4 or abs(len(first) - len(second)) > 2:
-        return False
-    if SequenceMatcher(None, first, second).ratio() < 0.84:
+    if edits == 0 or abs(len(first) - len(second)) > edits:
         return False
 
-    # Bounded Levenshtein distance: reject longer differences even when a
-    # long shared prefix would otherwise make the ratio look convincing.
-    previous = list(range(len(second) + 1))
-    for index, char in enumerate(first, 1):
-        current = [index]
-        for other_index, other in enumerate(second, 1):
-            current.append(min(current[-1] + 1, previous[other_index] + 1,
-                               previous[other_index - 1] + (char != other)))
-        previous = current
-    return previous[-1] <= 2
+    # A common prefix costs no edits. At the first mismatch, try replacing,
+    # deleting, or inserting one character. The spelling review allows two edits.
+    for index, (char, other) in enumerate(zip(first, second)):
+        if char != other:
+            first_tail = first[index:]
+            second_tail = second[index:]
+            return (
+                _within_edit_distance(first_tail[1:], second_tail[1:], edits - 1)
+                or _within_edit_distance(first_tail[1:], second_tail, edits - 1)
+                or _within_edit_distance(first_tail, second_tail[1:], edits - 1)
+            )
+    return True
+
+
+def _similar_group_values(source: str, target: str) -> bool:
+    """Compare normalized spellings in source-to-target order."""
+    return (_within_edit_distance(source, target, 2)
+            and SequenceMatcher(None, source, target).ratio() >= 0.84)
+
+
+def _spelling_blocks(length: int):
+    first_cut = length // 3
+    second_cut = 2 * length // 3
+    return (0, first_cut), (first_cut, second_cut), (second_cut, length)
+
+
+def _spelling_candidate_buckets(spelling: str, blocks):
+    # Two edits leave at least one of the target's three blocks intact. An
+    # insertion or deletion before that block can shift it by up to two places.
+    length = len(spelling)
+    for target_length in range(max(4, length - 2), length + 3):
+        for start, end in _spelling_blocks(target_length):
+            size = end - start
+            for offset in range(max(0, start - 2), min(start + 2, length - size) + 1):
+                ranks = blocks.get((target_length, start, spelling[offset:offset + size]))
+                if ranks:
+                    yield ranks
 
 
 def suggest_group_value_merges(groups, grouping_columns):
@@ -141,17 +163,43 @@ def suggest_group_value_merges(groups, grouping_columns):
     suggestions = []
     for index, column in enumerate(grouping_columns):
         counts = Counter()
+        casefolded = {}
         for key, rows in groups.items():
             value = key[index]
-            if (value.casefold() != "unknown group" and any(c.isalpha() for c in value)
-                    and not any(c.isdigit() for c in value)):
-                counts[value] += len(rows)
-        ranked = sorted(counts, key=lambda value: (-counts[value], value.casefold(), value))
-        for position, source in enumerate(ranked):
-            candidates = [target for target in ranked[:position] if _similar_group_values(source, target)]
-            if candidates:
-                target = candidates[0]
+            if value not in casefolded:
+                if not any(c.isalpha() for c in value) or any(c.isdigit() for c in value):
+                    continue
+                folded = value.casefold()
+                if folded == "unknown group":
+                    continue
+                casefolded[value] = folded
+            counts[value] += len(rows)
+        ranked = sorted(
+            counts, key=lambda value: (-counts[value], casefolded[value], value),
+        )
+        spellings = [" ".join(casefolded[value].split()) for value in ranked]
+        first_ranks = {}
+        blocks = defaultdict(list)
+        for position, spelling in enumerate(spellings):
+            length = len(spelling)
+            # A normalized duplicate is a fallback while higher ranks are checked.
+            target_rank = first_ranks.get(spelling, position)
+            if length >= 4 and target_rank > 0:
+                buckets = _spelling_candidate_buckets(spelling, blocks)
+                for candidate, _ in groupby(merge(*buckets)):
+                    if candidate >= target_rank:
+                        break
+                    if _similar_group_values(spelling, spellings[candidate]):
+                        target_rank = candidate
+                        break
+            if target_rank < position:
+                source, target = ranked[position], ranked[target_rank]
                 suggestions.append((column, source, target, counts[source], counts[target]))
+            if spelling not in first_ranks:
+                first_ranks[spelling] = position
+                if length >= 4:
+                    for start, end in _spelling_blocks(length):
+                        blocks[length, start, spelling[start:end]].append(position)
     return suggestions
 
 
