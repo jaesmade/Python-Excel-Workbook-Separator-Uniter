@@ -66,6 +66,8 @@ CSV files are read as single-sheet tabular data and are exported to an Excel wor
 
 CSV values are imported as text so identifiers with leading zeros and values such as `NA` are preserved. Excel cells retain their stored value types. Duplicate column headers are rejected, and text beginning with `=` is written as text.
 
+Worksheets containing formulas are rejected because splitting can change cell references or remove referenced sheets. To split their current results, make a copy and replace formulas with values first. The app checks all worksheets when loading a workbook in the interface.
+
 Selecting `All sheets` combines rows from every worksheet in every selected Excel workbook before grouping. This is the default for workbooks containing multiple worksheets and for multiple uploaded files. Different worksheets and files may have different columns or column order. The output uses the first-seen union of headers, and missing values are left blank. Empty worksheets and blank rows are skipped.
 
 With `Combine duplicate groups` enabled, matching groups from different worksheets or files are merged. Disable it to keep each source worksheet's groups separate. The preview includes the source workbook and worksheet names, and selected preview groups are used for export. Loaded worksheets are cached for both preview and export; reload a file to pick up changes made after it was opened.

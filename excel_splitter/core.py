@@ -10,6 +10,7 @@ import pandas as pd
 import xlwt
 from openpyxl import Workbook
 
+from .formula_check import formula_cell
 from .utils import SheetNameRegistry, detect_header_names, normalize_group_value, sanitize_sheet_name
 from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_worksheet, legacy_styles
 
@@ -52,6 +53,19 @@ def _select_excel_engine(file_path: str) -> str | None:
     return None
 
 
+def _ensure_no_formulas(file_path: str, sheet_name: str):
+    try:
+        coordinate = formula_cell(file_path, sheet_name)
+    except ValueError as exc:
+        raise WorkbookProcessingError(str(exc)) from exc
+    if coordinate:
+        raise WorkbookProcessingError(
+            f"Formula found in '{os.path.basename(file_path)}' - '{sheet_name}' at {coordinate}. "
+            "Formulas cannot be safely split because references may change. "
+            "Replace formulas with values in a copy of the workbook and try again."
+        )
+
+
 def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFrame:
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".csv":
@@ -59,6 +73,7 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
         return _table_from_raw(raw, os.path.basename(file_path))
     with pd.ExcelFile(file_path, engine=_select_excel_engine(file_path)) as workbook:
         name = workbook.sheet_names[0] if sheet_name is None else sheet_name
+        _ensure_no_formulas(file_path, name)
         raw = workbook.parse(sheet_name=name, header=None, dtype=object, keep_default_na=False)
         return _table_from_raw(raw, f"{os.path.basename(file_path)} - {name}")
 
@@ -94,6 +109,7 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
                 raise WorkbookProcessingError(
                     f"Worksheet '{source_sheet_name}' was not found in '{os.path.basename(file_path)}'."
                 )
+            _ensure_no_formulas(file_path, source_sheet_name)
             raw = workbook.parse(sheet_name=source_sheet_name, header=None, dtype=object, keep_default_na=False)
             yield source_sheet_name, _table_from_raw(raw, f"{os.path.basename(file_path)} - {source_sheet_name}")
 
