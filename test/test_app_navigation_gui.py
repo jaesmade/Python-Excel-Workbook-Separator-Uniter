@@ -1,4 +1,4 @@
-"""Exercise the desktop settings and project link through their dialogs."""
+"""Exercise desktop preferences and help through the menu commands."""
 
 import tkinter as tk
 from contextlib import contextmanager
@@ -23,6 +23,11 @@ def launch_app():
         window.destroy()
 
 
+def invoke_menu(button, label):
+    menu = button.nametowidget(button.cget("menu"))
+    menu.invoke(label)
+
+
 def test_settings_persist_and_keep_group_selection():
     appearance_at_close = []
 
@@ -42,7 +47,7 @@ def test_settings_persist_and_keep_group_selection():
         app._render_groups()
         app.group_checkboxes[("Group 00",)].toggle()
         with patch.object(app, "wait_window", side_effect=change_settings):
-            app.settings_button.invoke()
+            invoke_menu(app.settings_button, "Preferences…")
         assert appearance_at_close == ["Light"]
         assert ctk.get_appearance_mode() == "Dark"
         assert len(app.group_checkboxes) == 25
@@ -57,16 +62,29 @@ def test_settings_persist_and_keep_group_selection():
         assert ctk.get_appearance_mode() == "Dark"
 
 
-def test_help_button_opens_the_repository():
-    def open_project(dialog):
-        dialog.github_button.invoke()
+@pytest.mark.parametrize(("label", "url"), [
+    ("GitHub repository", "https://github.com/jaesmade/Python-Excel-Workbook-Separator-Uniter"),
+    ("Version history", "https://github.com/jaesmade/Python-Excel-Workbook-Separator-Uniter/releases"),
+])
+def test_help_menu_opens_project_links(label, url):
+    with launch_app() as app, patch("webbrowser.open_new_tab", return_value=True) as browser:
+        invoke_menu(app.help_button, label)
+
+    browser.assert_called_once_with(url)
+
+
+@pytest.mark.parametrize(("button", "label", "title"), [
+    ("help_button", "Quick start", "Excel Arranger Help"),
+    ("settings_button", "Saved spellings…", "Saved spellings"),
+])
+def test_menu_opens_dialog(button, label, title):
+    def check_dialog(dialog):
+        assert dialog.title() == title
         dialog.destroy()
 
-    with launch_app() as app, patch("webbrowser.open_new_tab", return_value=True) as browser:
-        with patch.object(app, "wait_window", side_effect=open_project):
-            app.help_button.invoke()
-
-    browser.assert_called_once_with("https://github.com/jaesmade/Python-Excel-Workbook-Separator-Uniter")
+    with launch_app() as app, patch.object(app, "wait_window", side_effect=check_dialog) as wait:
+        invoke_menu(getattr(app, button), label)
+        wait.assert_called_once()
 
 
 def test_review_tools_fit_at_minimum_window_size():

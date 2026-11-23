@@ -35,7 +35,7 @@ from excel_splitter.spelling_review import KEEP_SEPARATE, SpellingReview
 from excel_splitter.manual_merge import category_values, merge_categories
 from excel_splitter.saved_spellings import SavedSpellings
 from excel_splitter.gui import styles
-from excel_splitter.gui.app_dialogs import AppPreferences, HelpDialog, SettingsDialog
+from excel_splitter.gui.app_dialogs import PROJECT_URL, AppPreferences, HelpDialog, SettingsDialog, open_project_link
 from excel_splitter.gui.saved_spellings_dialog import SavedSpellingsDialog
 from excel_splitter.gui.duplicate_records_dialog import DuplicateRecordsDialog
 
@@ -312,29 +312,58 @@ class ExcelSplitterApp(ctk.CTk):
         self._render_groups()
 
     def _build_header(self):
-        header = ctk.CTkFrame(self, fg_color="#103A30", corner_radius=0)
+        header_color = "#103A30"
+        header = ctk.CTkFrame(self, fg_color=header_color, corner_radius=0)
         header.grid(row=0, column=0, columnspan=2, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
+
+        menu_bar = tk.Frame(header, bg=header_color, padx=10)
+        menu_bar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self.settings_button, settings = self._add_header_menu(menu_bar, "Settings")
+        settings.add_command(label="Preferences…", command=self.show_settings)
+        settings.add_command(label="Saved spellings…", command=self.manage_saved_spellings)
+
+        self.help_button, help_menu = self._add_header_menu(menu_bar, "Help")
+        help_menu.add_command(label="Quick start", accelerator="F1", command=self.show_help)
+        help_menu.add_separator()
+        help_menu.add_command(
+            label="GitHub repository", command=lambda: open_project_link(self, "GitHub repository", PROJECT_URL),
+        )
+        help_menu.add_command(
+            label="Version history", command=lambda: open_project_link(self, "Version history", f"{PROJECT_URL}/releases"),
+        )
+
         ctk.CTkLabel(
             header, text="▦", width=40, height=40, corner_radius=9, fg_color="#20664F",
             text_color="#F1FFF7", font=ctk.CTkFont(family="Segoe UI Symbol", size=25),
-        ).grid(row=0, column=0, rowspan=2, padx=(22, 12), pady=15)
+        ).grid(row=1, column=0, rowspan=2, padx=(22, 12), pady=6)
         ctk.CTkLabel(
             header, text="Excel Arranger", text_color="#F1FFF7", font=ctk.CTkFont(size=23, weight="bold"),
-        ).grid(row=0, column=1, pady=(11, 0), sticky="sw")
+        ).grid(row=1, column=1, pady=(4, 0), sticky="sw")
         ctk.CTkLabel(
             header, text="Split and combine Excel or CSV files", text_color="#B6D7C8", height=18,
-        ).grid(row=1, column=1, pady=(0, 13), sticky="nw")
-        self.settings_button = ctk.CTkButton(
-            header, text="Settings", width=90, height=34, command=self.show_settings,
-            fg_color="#205447", hover_color="#2B6958", text_color="#F1FFF7",
+        ).grid(row=2, column=1, pady=(0, 3), sticky="nw")
+
+    def _add_header_menu(self, menu_bar, label):
+        background = menu_bar.cget("bg")
+        button = tk.Menubutton(
+            menu_bar, text=label, direction="below", takefocus=True,
+            bg=background, fg="#F1FFF7", activebackground="#205447", activeforeground="#F1FFF7",
+            relief="flat", borderwidth=0, padx=9, pady=4,
+            highlightthickness=1, highlightbackground=background, highlightcolor="#B6D7C8",
         )
-        self.settings_button.grid(row=0, column=2, rowspan=2, padx=(10, 8))
-        self.help_button = ctk.CTkButton(
-            header, text="Help", width=72, height=34, command=self.show_help,
-            fg_color="#205447", hover_color="#2B6958", text_color="#F1FFF7",
-        )
-        self.help_button.grid(row=0, column=3, rowspan=2, padx=(0, 22))
+        menu = tk.Menu(button, tearoff=False, relief="flat")
+
+        def apply_menu_colors():
+            menu.configure(
+                bg=styles.native_color(styles.SURFACE), fg=styles.native_color(styles.TEXT),
+                activebackground=styles.native_color(styles.SELECTED), activeforeground=styles.native_color(styles.TEXT),
+            )
+
+        menu.configure(postcommand=apply_menu_colors)
+        button.configure(menu=menu)
+        button.pack(side="left")
+        return button, menu
 
     def _build_setup_panel(self):
         panel = ctk.CTkFrame(self, **styles.CARD)

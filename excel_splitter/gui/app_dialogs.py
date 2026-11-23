@@ -18,6 +18,15 @@ PAGE_SIZES = (25, 50, 100)
 PROJECT_URL = "https://github.com/jaesmade/Python-Excel-Workbook-Separator-Uniter"
 
 
+def open_project_link(parent, title, url):
+    try:
+        if webbrowser.open_new_tab(url):
+            return
+    except (OSError, webbrowser.Error):
+        pass
+    messagebox.showinfo(title, f"Open this address in your browser:\n\n{url}", parent=parent)
+
+
 @dataclass(frozen=True)
 class AppPreferences:
     appearance: str = "Light"
@@ -130,18 +139,6 @@ class HelpDialog(ctk.CTkToplevel):
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.pack(fill="x", padx=24, pady=(8, 22))
-        self.github_button = ctk.CTkButton(
-            actions, text="View on GitHub", width=134, height=34, command=self._open_project, **styles.PRIMARY_BUTTON
-        )
-        self.github_button.pack(side="left")
         ctk.CTkButton(actions, text="Close", width=82, height=34, command=self.destroy,
                       **styles.SECONDARY_BUTTON).pack(side="right")
         self.grab_set()
-
-    def _open_project(self):
-        try:
-            if webbrowser.open_new_tab(PROJECT_URL):
-                return
-        except (OSError, webbrowser.Error):
-            pass
-        messagebox.showinfo("GitHub repository", f"Open this address in your browser:\n\n{PROJECT_URL}", parent=self)
