@@ -34,6 +34,7 @@ from excel_splitter.core import (
 from excel_splitter.spelling_review import KEEP_SEPARATE, SpellingReview
 from excel_splitter.manual_merge import category_values, merge_categories
 from excel_splitter.saved_spellings import SavedSpellings
+from excel_splitter.gui.app_dialogs import AppPreferences, HelpDialog, SettingsDialog
 from excel_splitter.gui.saved_spellings_dialog import SavedSpellingsDialog
 from excel_splitter.gui.duplicate_records_dialog import DuplicateRecordsDialog
 
@@ -269,8 +270,35 @@ class ExcelSplitterApp(ctk.CTk):
         self.value_mappings = {}
         self._last_spelling_review = None
         self.saved_spellings = SavedSpellings()
+        self.preferences_path = self.saved_spellings.path.with_name("preferences.json")
+        self.preferences = AppPreferences.load(self.preferences_path)
+        ctk.set_appearance_mode(self.preferences.appearance)
 
         self._build_ui()
+        self.bind("<Control-o>", self._open_files_shortcut)
+        self.bind("<F1>", self._help_shortcut)
+
+    def _open_files_shortcut(self, _event):
+        self.browse_file()
+        return "break"
+
+    def _help_shortcut(self, _event):
+        self.show_help()
+        return "break"
+
+    def show_settings(self):
+        self.wait_window(SettingsDialog(self))
+
+    def show_help(self):
+        self.wait_window(HelpDialog(self))
+
+    def apply_preferences(self, preferences):
+        page_size_changed = self.preferences.page_size != preferences.page_size
+        self.preferences = preferences
+        ctk.set_appearance_mode(preferences.appearance)
+        if self.groups and page_size_changed:
+            self.group_page = 0
+            self._render_groups(self.selected_group_keys)
 
     def _build_ui(self):
         teal = "#4F46E5"
@@ -287,9 +315,15 @@ class ExcelSplitterApp(ctk.CTk):
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.grid(row=0, column=0, padx=24, pady=(20, 12), sticky="ew")
-        ctk.CTkLabel(header, text="Excel Arranger", text_color=text,
+        self.help_button = ctk.CTkButton(header, text="Help", width=72, command=self.show_help)
+        self.help_button.pack(side="right")
+        self.settings_button = ctk.CTkButton(header, text="Settings", width=88, command=self.show_settings)
+        self.settings_button.pack(side="right", padx=(0, 8))
+        title = ctk.CTkFrame(header, fg_color="transparent")
+        title.pack(side="left")
+        ctk.CTkLabel(title, text="Excel Arranger", text_color=text,
                      font=ctk.CTkFont(size=25, weight="bold"), anchor="w").pack(anchor="w")
-        ctk.CTkLabel(header, text="Organize your data into ready-to-use worksheets.",
+        ctk.CTkLabel(title, text="Organize your data into ready-to-use worksheets.",
                      text_color=muted, font=ctk.CTkFont(size=13), anchor="w").pack(anchor="w", pady=(2, 0))
 
         top = ctk.CTkFrame(self, corner_radius=18, fg_color="#FFFFFF", border_color=line, border_width=1)
@@ -842,7 +876,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.selected_group_keys = set(selected_groups)
 
         ordered_groups = self._matching_groups()
-        page_size = 50
+        page_size = self.preferences.page_size
         page_count = max(1, (len(ordered_groups) + page_size - 1) // page_size)
         self.group_page = max(0, min(self.group_page, page_count - 1))
         self.group_page_var.set(f"Page {self.group_page + 1} of {page_count}  ·  {len(ordered_groups):,} matching groups")
@@ -1089,7 +1123,6 @@ class ExcelSplitterApp(ctk.CTk):
 
 
 def main():
-    ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
     app = ExcelSplitterApp()
     app.mainloop()
