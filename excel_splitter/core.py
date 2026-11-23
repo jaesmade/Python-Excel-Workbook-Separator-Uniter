@@ -15,10 +15,14 @@ import pandas as pd
 import xlrd
 import xlwt
 from openpyxl import Workbook
+from openpyxl.cell import Cell
 
 from .formula_check import formula_cell
 from .utils import SheetNameRegistry, detect_header_names, normalize_group_value, sanitize_sheet_name
-from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_worksheet, legacy_cell_style, legacy_styles
+from .formatting import (
+    CENTERED_COLUMNS, COLUMN_WIDTHS, append_xlsx_header, format_legacy_dimensions,
+    legacy_cell_style, legacy_styles, xlsx_body_styles,
+)
 
 
 class WorkbookProcessingError(ValueError):
@@ -648,6 +652,34 @@ def _normalize_xlsx_line_breaks(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _xlsx_row(sheet, values, styles):
+    formats = getattr(values, "number_formats", None)
+    for index, (value, style) in enumerate(zip(values, styles)):
+        if pd.isna(value):
+            yield Cell(sheet, row=1, column=1, style_array=style)
+            continue
+        cell_value = _normalize_xlsx_line_breaks(value) if isinstance(value, str) else value
+        cell = Cell(sheet, row=1, column=1, value=cell_value, style_array=style)
+        if formats is not None and formats[index]:
+            cell.number_format = formats[index]
+        if isinstance(value, _ExcelError):
+            cell.data_type = "e"
+        elif isinstance(value, str):
+            cell.data_type = "s"
+        yield cell
+
+
+def _discard_xlsx_streams(workbook):
+    # Workbook.close() doesn't discard the openpyxl writer's temporary XML.
+    for sheet in workbook.worksheets:
+        writer = sheet._writer
+        if writer is not None and os.path.exists(writer.out):
+            if sheet._rows is not None:
+                sheet._rows.close()
+            writer.close()
+            writer.cleanup()
+
+
 def split_input_tables(input_tables, department_column: str, id_number_column: str | None,
                        output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                        progress_callback: Callable[[int, str], None] | None = None,
@@ -688,27 +720,43 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
     )
     total_groups = len(ordered_groups)
 
-    # Both Excel formats limit cell text to 32,767 characters. openpyxl
-    # silently truncates longer strings, so check the actual export first.
+    # Check Excel's text limits and measure XLSX column widths before writing.
+    # A streaming worksheet must emit column dimensions ahead of its rows.
+    auto_widths = [header.strip().casefold() not in COLUMN_WIDTHS for header in combined_headers]
+    xlsx_value_lengths = []
     for sheet_title, _group_key, rows in ordered_groups:
+        if not legacy_output and len(rows) >= 1_048_576:
+            raise WorkbookProcessingError(
+                f"Worksheet '{sheet_title}' exceeds Excel's 1,048,576-row limit including its header. "
+                "Split the group and try again."
+            )
+        longest = [0] * column_count
         for row_num, values in enumerate(chain([combined_headers], rows), start=1):
-            for col_num, value in enumerate(values, start=1):
-                if not isinstance(value, str):
+            for col_index, value in enumerate(values):
+                if isinstance(value, str):
+                    text_length = len(value)
+                    if not legacy_output:
+                        # Each CRLF pair becomes one LF in XLSX cells.
+                        text_length -= value.count("\r\n")
+                    if text_length > 32767:
+                        raise WorkbookProcessingError(
+                            f"Text in worksheet '{sheet_title}', row {row_num}, column {col_index + 1} "
+                            "exceeds Excel's 32,767-character cell limit. Shorten the value and try again."
+                        )
+                    if row_num == 1 and not legacy_output and text_length > 255:
+                        raise WorkbookProcessingError(
+                            f"The table header in column {col_index + 1} exceeds Excel's 255-character table header limit. "
+                            "Shorten the header and try again."
+                        )
+                elif not legacy_output and auto_widths[col_index] and not pd.isna(value):
+                    # openpyxl decodes byte strings before storing them in cells.
+                    text_length = len(value.decode("utf-8") if isinstance(value, bytes) else str(value))
+                else:
                     continue
-                text_length = len(value)
-                if not legacy_output:
-                    # Each CRLF pair becomes one LF in XLSX cells.
-                    text_length -= value.count("\r\n")
-                if text_length > 32767:
-                    raise WorkbookProcessingError(
-                        f"Text in worksheet '{sheet_title}', row {row_num}, column {col_num} "
-                        "exceeds Excel's 32,767-character cell limit. Shorten the value and try again."
-                    )
-                if row_num == 1 and not legacy_output and text_length > 255:
-                    raise WorkbookProcessingError(
-                        f"The table header in column {col_num} exceeds Excel's 255-character table header limit. "
-                        "Shorten the header and try again."
-                    )
+                if not legacy_output and auto_widths[col_index] and text_length > longest[col_index]:
+                    longest[col_index] = text_length
+        if not legacy_output:
+            xlsx_value_lengths.append(longest)
 
     if legacy_output:
         workbook = xlwt.Workbook()
@@ -755,39 +803,27 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
     if len(xlsx_headers) != len(set(xlsx_headers)):
         raise WorkbookProcessingError("Duplicate column headers after normalizing line breaks for XLSX output.")
 
-    output_wb = Workbook()
-    default_sheet = output_wb.active
-    output_wb.remove(default_sheet)
+    output_wb = Workbook(write_only=True)
+    styles = xlsx_body_styles(output_wb, xlsx_headers)
+    try:
+        for index, (sheet_title, group_key, rows) in enumerate(ordered_groups, start=1):
+            target_sheet = output_wb.create_sheet(title=sheet_title)
+            append_xlsx_header(target_sheet, xlsx_headers, xlsx_value_lengths[index - 1], len(rows), index)
+            for row_num, row_values in enumerate(rows, start=2):
+                target_sheet.row_dimensions[row_num].height = 23
+                target_sheet.append(_xlsx_row(target_sheet, row_values, styles))
+                # The height is already in the XML. Release the row metadata too.
+                del target_sheet.row_dimensions[row_num]
+            target_sheet.close()
+            processed_rows += len(rows)
+            if progress_callback:
+                display_name = " - ".join(group_key)
+                progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
 
-    for index, (sheet_title, group_key, rows) in enumerate(ordered_groups, start=1):
-        display_name = " - ".join(group_key)
-        target_sheet = output_wb.create_sheet(title=sheet_title)
-
-        for col_num, header in enumerate(xlsx_headers, start=1):
-            cell = target_sheet.cell(row=1, column=col_num, value=header)
-            cell.data_type = "s"
-
-        for row_num, row_values in enumerate(rows, start=2):
-            for col_num, value in enumerate(row_values, start=1):
-                if pd.isna(value):
-                    target_sheet.cell(row=row_num, column=col_num, value=None)
-                else:
-                    cell_value = _normalize_xlsx_line_breaks(value) if isinstance(value, str) else value
-                    cell = target_sheet.cell(row=row_num, column=col_num, value=cell_value)
-                    formats = getattr(row_values, "number_formats", None)
-                    if formats is not None and formats[col_num - 1]:
-                        cell.number_format = formats[col_num - 1]
-                    if isinstance(value, _ExcelError):
-                        cell.data_type = "e"
-                    elif isinstance(value, str):
-                        cell.data_type = "s"
-            processed_rows += 1
-
-        format_worksheet(target_sheet, index)
-        if progress_callback:
-            progress_callback(40 + int((index / total_groups) * 60), f"Creating: {display_name}")
-
-    output_wb.save(output_file)
+        output_wb.save(output_file)
+    except BaseException:
+        _discard_xlsx_streams(output_wb)
+        raise
     return {
         "created_sheets": len(output_wb.worksheets),
         "processed_rows": processed_rows,

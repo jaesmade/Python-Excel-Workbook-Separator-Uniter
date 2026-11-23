@@ -86,3 +86,64 @@ def test_table_at_excel_column_limit_is_exported(tmp_path):
         assert sheet["XFD2"].value == 1
     finally:
         workbook.close()
+
+
+@pytest.mark.filterwarnings("error:In write-only mode you must add table columns manually")
+def test_export_preserves_table_filters_and_worksheet_layout(tmp_path):
+    source = pd.DataFrame(
+        [("Sales", "Open", "0123456789\r\n0123456789"), ("Support", "Closed", None)],
+        columns=["Department", "Status", "Note"],
+    )
+    output = tmp_path / "out.xlsx"
+
+    split_input_tables([("Staff", source)], "Department", None, str(output))
+
+    workbook = load_workbook(output)
+    try:
+        for index, title in enumerate(("Sales", "Support"), start=1):
+            sheet = workbook[title]
+            table = sheet.tables[f"Attendance_{index}"]
+            assert table.ref == table.autoFilter.ref == "A1:C2"
+            assert table.column_names == ["Department", "Status", "Note"]
+            assert table.tableStyleInfo.name == "TableStyleMedium2"
+            assert table.tableStyleInfo.showRowStripes
+            assert sheet.freeze_panes == "C2"
+            assert sheet.sheet_view.showGridLines is False
+            assert sheet.row_dimensions[1].height == 31
+            assert sheet.row_dimensions[2].height == 23
+            assert sheet["A1"].font.bold
+            assert sheet["B2"].alignment.horizontal == "center"
+            assert sheet["C2"].alignment.horizontal == "left"
+            assert sheet["C2"].font.name == "Arial"
+        assert workbook["Sales"]["C2"].value == "0123456789\n0123456789"
+        assert workbook["Sales"].column_dimensions["C"].width == 23
+        assert workbook["Support"]["C2"].value is None
+        assert workbook["Support"].column_dimensions["C"].width == 14
+    finally:
+        workbook.close()
+
+    workbook = load_workbook(output, read_only=True)
+    try:
+        assert workbook["Sales"].calculate_dimension() == "A1:C2"
+    finally:
+        workbook.close()
+
+
+def test_cancelled_stream_removes_temporary_worksheet_xml(tmp_path, monkeypatch):
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(spool))
+    source = pd.DataFrame([("Sales", "Open")], columns=["Department", "Status"])
+    output = tmp_path / "out.xlsx"
+    output.write_bytes(b"previous workbook")
+
+    def cancel(_progress, _message):
+        worksheet_xml, = spool.iterdir()
+        assert "Sales" in worksheet_xml.read_text(encoding="utf-8")
+        raise RuntimeError("export cancelled")
+
+    with pytest.raises(RuntimeError, match="export cancelled"):
+        split_input_tables([("Staff", source)], "Department", None, str(output), progress_callback=cancel)
+
+    assert not list(spool.iterdir())
+    assert output.read_bytes() == b"previous workbook"
