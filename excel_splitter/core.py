@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from codecs import BOM_UTF8
 from collections import Counter
 from datetime import date
 from collections import OrderedDict
@@ -248,10 +249,37 @@ def _ensure_no_formulas(file_path: str, sheet_name: str):
         )
 
 
+def _read_csv(file_path: str) -> pd.DataFrame:
+    filename = os.path.basename(file_path)
+    with open(file_path, "rb") as source:
+        # The pandas C parser discards the rest of a field after a NUL byte.
+        chunks = iter(lambda: source.read(64 * 1024), b"")
+        if any(b"\x00" in chunk for chunk in chunks):
+            raise WorkbookProcessingError(f"CSV file '{filename}' contains a NUL byte. Remove it and try again.")
+        source.seek(0)
+
+        options = {"header": None, "dtype": str, "keep_default_na": False}
+        try:
+            try:
+                return pd.read_csv(source, encoding="utf-8-sig", **options)
+            except UnicodeDecodeError:
+                source.seek(0)
+                if source.read(len(BOM_UTF8)) == BOM_UTF8:
+                    raise
+                source.seek(0)
+                return pd.read_csv(source, encoding="cp1252", **options)
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
+        except UnicodeDecodeError as exc:
+            raise WorkbookProcessingError(
+                f"CSV file '{filename}' could not be decoded. Save it as UTF-8 or Windows-1252 and try again."
+            ) from exc
+
+
 def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFrame:
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".csv":
-        raw = pd.read_csv(file_path, header=None, dtype=str, keep_default_na=False)
+        raw = _read_csv(file_path)
         return _table_from_raw(raw, os.path.basename(file_path))
     engine = _select_excel_engine(file_path)
     with pd.ExcelFile(file_path, engine=engine,
@@ -533,6 +561,11 @@ def split_workbooks(file_paths: list[str], sheet_name: str | _SheetSelection | N
                               grouping_columns, sort_mode)
 
 
+def _normalize_xlsx_line_breaks(text: str) -> str:
+    # On Windows openpyxl's text-mode XML writer can turn CRLF into CRCRLF.
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def split_input_tables(input_tables, department_column: str, id_number_column: str | None,
                        output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                        progress_callback: Callable[[int, str], None] | None = None,
@@ -557,9 +590,9 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
     if not selected_groups.issubset(combined_groups):
         raise WorkbookProcessingError("The selected groups have changed. Refresh the group preview and try again.")
 
-    output_ext = os.path.splitext(output_file)[1].lower()
+    legacy_output = os.path.splitext(output_file)[1].lower() == ".xls"
     column_count = len(combined_headers)
-    if output_ext != ".xls" and column_count > 16_384:
+    if not legacy_output and column_count > 16_384:
         raise WorkbookProcessingError(
             f"The output has {column_count:,} columns, exceeding Excel's 16,384-column worksheet limit. "
             "Reduce the number of input columns and try again."
@@ -581,18 +614,21 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                 if not isinstance(value, str):
                     continue
                 text_length = len(value)
+                if not legacy_output:
+                    # Each CRLF pair becomes one LF in XLSX cells.
+                    text_length -= value.count("\r\n")
                 if text_length > 32767:
                     raise WorkbookProcessingError(
                         f"Text in worksheet '{sheet_title}', row {row_num}, column {col_num} "
                         "exceeds Excel's 32,767-character cell limit. Shorten the value and try again."
                     )
-                if row_num == 1 and output_ext != ".xls" and text_length > 255:
+                if row_num == 1 and not legacy_output and text_length > 255:
                     raise WorkbookProcessingError(
                         f"The table header in column {col_num} exceeds Excel's 255-character table header limit. "
                         "Shorten the header and try again."
                     )
 
-    if output_ext == ".xls":
+    if legacy_output:
         workbook = xlwt.Workbook()
         styles = legacy_styles(workbook)
         for index, (sheet_title, group_key, rows) in enumerate(ordered_groups, start=1):
@@ -633,6 +669,10 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
             "output_file": output_file,
         }
 
+    xlsx_headers = [_normalize_xlsx_line_breaks(header) for header in combined_headers]
+    if len(xlsx_headers) != len(set(xlsx_headers)):
+        raise WorkbookProcessingError("Duplicate column headers after normalizing line breaks for XLSX output.")
+
     output_wb = Workbook()
     default_sheet = output_wb.active
     output_wb.remove(default_sheet)
@@ -641,7 +681,7 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
         display_name = " - ".join(group_key)
         target_sheet = output_wb.create_sheet(title=sheet_title)
 
-        for col_num, header in enumerate(combined_headers, start=1):
+        for col_num, header in enumerate(xlsx_headers, start=1):
             cell = target_sheet.cell(row=1, column=col_num, value=header)
             cell.data_type = "s"
 
@@ -650,7 +690,8 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                 if pd.isna(value):
                     target_sheet.cell(row=row_num, column=col_num, value=None)
                 else:
-                    cell = target_sheet.cell(row=row_num, column=col_num, value=value)
+                    cell_value = _normalize_xlsx_line_breaks(value) if isinstance(value, str) else value
+                    cell = target_sheet.cell(row=row_num, column=col_num, value=cell_value)
                     formats = getattr(row_values, "number_formats", None)
                     if formats is not None and formats[col_num - 1]:
                         cell.number_format = formats[col_num - 1]
