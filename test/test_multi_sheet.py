@@ -23,6 +23,7 @@ from excel_splitter.core import (
     WorkbookProcessingError,
     _iter_input_tables,
     build_combined_group_map,
+    split_input_tables,
     split_workbooks,
 )
 from excel_splitter.gui.main_window import ExcelSplitterApp
@@ -137,6 +138,16 @@ class MultiSheetWorkbookTests(unittest.TestCase):
         self.assertEqual(len(tables), 1)
         self.assertEqual(tables[0][0], "First")
         self.assertEqual(tables[0][1]["Name"].tolist(), ["Alice"])
+
+    def test_named_sheet_export_accepts_the_former_all_sheets_marker(self):
+        source = self.write_workbook("staff.xlsx", {
+            "Other": [["Department", "Name"], ["Sales", "Bob"]],
+            "__ALL_SHEETS__": [["Department", "Name"], ["Sales", "Alice"]],
+        })
+
+        output, _ = self.split([source], "__ALL_SHEETS__")
+
+        self.assertEqual(self.output_rows(output), [{"Department": "Sales", "Name": "Alice"}])
 
     def test_multiple_workbooks_align_reordered_and_optional_columns(self):
         first = self.write_workbook("first.xlsx", {
@@ -379,6 +390,23 @@ class MultiSheetWorkbookTests(unittest.TestCase):
         self.assertEqual(app.sheet_var.get(), "Staff")
         self.assertEqual(app.selected_sheet_name, "Staff")
         self.assertEqual(set(app.groups), {("Sales",)})
+
+    def test_ui_exports_only_the_worksheet_named_like_the_former_marker(self):
+        source = self.write_workbook("staff.xlsx", {
+            "Other": [["Department", "Name"], ["Sales", "Bob"]],
+            "__ALL_SHEETS__": [["Department", "Name"], ["Sales", "Alice"]],
+        })
+        app = self.make_app([source])
+        app.load_workbook(source)
+        self.assertEqual(len(app.groups[("Sales",)]), 2)
+
+        self.assertIn("__ALL_SHEETS__", app.sheet_options)
+        self.assertTrue(app.on_sheet_selected("__ALL_SHEETS__"))
+        output = str(self.folder / "output.xlsx")
+        split_input_tables(app._selected_tables(), "Department", None, output, {("Sales",)})
+
+        self.assertEqual(self.output_rows(output), [{"Department": "Sales", "Name": "Alice"}])
+        self.assertEqual(app.groups[("Sales",)], [("Sales", "Alice")])
 
     def test_ui_multi_file_preview_honors_duplicate_checkbox_without_rereading(self):
         first = self.write_workbook("first.xlsx", {

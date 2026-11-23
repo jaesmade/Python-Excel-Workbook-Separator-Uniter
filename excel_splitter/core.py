@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import date
 from collections import OrderedDict
 from difflib import SequenceMatcher
+from enum import Enum, auto
 from typing import Callable
 from itertools import chain
 
@@ -83,7 +84,11 @@ def ensure_output_is_not_input(output_path, input_paths):
             raise WorkbookProcessingError("Choose a different output file to avoid overwriting an input file.")
 
 
-ALL_SHEETS = "__ALL_SHEETS__"
+class _SheetSelection(Enum):
+    ALL = auto()
+
+
+ALL_SHEETS = _SheetSelection.ALL
 SORT_ALPHABETICAL = "alphabetical"
 SORT_COUNT_ASCENDING = "count_ascending"
 SORT_COUNT_DESCENDING = "count_descending"
@@ -248,7 +253,7 @@ def _table_from_raw(raw: pd.DataFrame, source_label: str) -> pd.DataFrame:
     return table
 
 
-def _iter_input_tables(file_path: str, sheet_name: str | None):
+def _iter_input_tables(file_path: str, sheet_name: str | _SheetSelection | None):
     if os.path.splitext(file_path)[1].lower() == ".csv":
         yield "CSV file", _read_input_file(file_path)
         return
@@ -256,7 +261,7 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
     engine = _select_excel_engine(file_path)
     with pd.ExcelFile(file_path, engine=engine,
                       engine_kwargs={"formatting_info": True} if engine == "xlrd" else {}) as workbook:
-        selected_sheets = workbook.sheet_names if sheet_name == ALL_SHEETS else [
+        selected_sheets = workbook.sheet_names if sheet_name is ALL_SHEETS else [
             workbook.sheet_names[0] if sheet_name is None else sheet_name
         ]
         for source_sheet_name in selected_sheets:
@@ -456,7 +461,8 @@ def build_combined_group_map(
     return headers, combined_groups
 
 
-def split_workbook(file_path: str, sheet_name: str, department_column: str, id_number_column: str | None,
+def split_workbook(file_path: str, sheet_name: str | _SheetSelection | None,
+                   department_column: str, id_number_column: str | None,
                    output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                    progress_callback: Callable[[int, str], None] | None = None,
            combine_duplicates: bool = True,
@@ -466,7 +472,8 @@ def split_workbook(file_path: str, sheet_name: str, department_column: str, id_n
                selected_groups, progress_callback, combine_duplicates, grouping_columns, sort_mode)
 
 
-def split_workbooks(file_paths: list[str], sheet_name: str, department_column: str, id_number_column: str | None,
+def split_workbooks(file_paths: list[str], sheet_name: str | _SheetSelection | None,
+                    department_column: str, id_number_column: str | None,
                     output_file: str, selected_groups: set[tuple[str, ...]] | None = None,
                     progress_callback: Callable[[int, str], None] | None = None,
                     combine_duplicates: bool = True,

@@ -806,7 +806,7 @@ class ExcelSplitterApp(ctk.CTk):
         self._populate_groups()
 
     def _selected_tables(self):
-        if self.selected_sheet_name == ALL_SHEETS:
+        if self.selected_sheet_name is ALL_SHEETS:
             return [(source_name, table) for source_name, table in self.input_tables if not table.empty]
         table = self.workbook[self.selected_sheet_name]
         if table.empty:
