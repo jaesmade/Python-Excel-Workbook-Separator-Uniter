@@ -24,7 +24,14 @@ def launch_app():
 
 
 def test_settings_persist_and_keep_group_selection():
+    appearance_at_close = []
+
     def change_settings(dialog):
+        def remember_appearance(event):
+            if event.widget is dialog:
+                appearance_at_close.append(ctk.get_appearance_mode())
+
+        dialog.bind("<Destroy>", remember_appearance)
         dialog.appearance_var.set("Dark")
         dialog.page_size_var.set("25")
         dialog.save_button.invoke()
@@ -36,6 +43,7 @@ def test_settings_persist_and_keep_group_selection():
         app.group_checkboxes[("Group 00",)].toggle()
         with patch.object(app, "wait_window", side_effect=change_settings):
             app.settings_button.invoke()
+        assert appearance_at_close == ["Light"]
         assert ctk.get_appearance_mode() == "Dark"
         assert len(app.group_checkboxes) == 25
         assert ("Group 00",) not in app.selected_group_keys
@@ -59,3 +67,29 @@ def test_help_button_opens_the_repository():
             app.help_button.invoke()
 
     browser.assert_called_once_with("https://github.com/jaesmade/Python-Excel-Workbook-Separator-Uniter")
+
+
+def test_review_tools_fit_at_minimum_window_size():
+    with launch_app() as app:
+        width, height = app.wm_minsize()
+        app.wm_geometry(f"{width}x{height}")
+        app.update()
+        review_button = next(
+            widget for panel in app.winfo_children() for widget in panel.winfo_children()
+            if isinstance(widget, ctk.CTkButton) and widget.cget("text") == "Review duplicate records"
+        )
+        panel_bottom = review_button.master.winfo_rooty() + review_button.master.winfo_height()
+        button_bottom = review_button.winfo_rooty() + review_button.winfo_height()
+        assert button_bottom <= panel_bottom
+
+
+def test_long_group_names_wrap_at_minimum_window_size():
+    with launch_app() as app:
+        width, height = app.wm_minsize()
+        app.wm_geometry(f"{width}x{height}")
+        short = ("Operations",)
+        long = ("Operations", "National Customer Experience and Change Management", "Senior Administrator", "North")
+        app.groups = {short: [(1,)], long: [(2,)]}
+        app._render_groups()
+        app.update()
+        assert app.group_checkboxes[long].winfo_height() > app.group_checkboxes[short].winfo_height()

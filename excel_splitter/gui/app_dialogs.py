@@ -10,6 +10,8 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 
+from excel_splitter.gui import styles
+
 
 APPEARANCE_MODES = ("System", "Light", "Dark")
 PAGE_SIZES = (25, 50, 100)
@@ -56,7 +58,7 @@ class AppPreferences:
 
 class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, app):
-        super().__init__(app)
+        super().__init__(app, fg_color=styles.SURFACE)
         self.app = app
         self.title("Settings")
         self.transient(app)
@@ -64,10 +66,10 @@ class SettingsDialog(ctk.CTkToplevel):
         self.grid_columnconfigure(1, weight=1)
         self.bind("<Escape>", lambda _event: self.destroy())
 
-        ctk.CTkLabel(self, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).grid(
+        ctk.CTkLabel(self, text="Settings", text_color=styles.TEXT, font=ctk.CTkFont(size=24, weight="bold")).grid(
             row=0, column=0, columnspan=2, padx=24, pady=(20, 4), sticky="w"
         )
-        ctk.CTkLabel(self, text="Preferences are saved on this device.").grid(
+        ctk.CTkLabel(self, text="Preferences are saved on this device.", text_color=styles.MUTED).grid(
             row=1, column=0, columnspan=2, padx=24, pady=(0, 14), sticky="w"
         )
         self.appearance_var = ctk.StringVar(master=self, value=app.preferences.appearance)
@@ -76,15 +78,19 @@ class SettingsDialog(ctk.CTkToplevel):
             ("Appearance", self.appearance_var, list(APPEARANCE_MODES)),
             ("Groups per page", self.page_size_var, [str(size) for size in PAGE_SIZES]),
         ), start=2):
-            ctk.CTkLabel(self, text=label).grid(row=row, column=0, padx=(24, 32), pady=7, sticky="w")
-            ctk.CTkOptionMenu(self, values=values, variable=variable, width=160).grid(
+            ctk.CTkLabel(self, text=label, text_color=styles.TEXT).grid(
+                row=row, column=0, padx=(24, 32), pady=7, sticky="w"
+            )
+            ctk.CTkOptionMenu(self, values=values, variable=variable, width=160, height=34, **styles.OPTION).grid(
                 row=row, column=1, padx=(0, 24), pady=7, sticky="e"
             )
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.grid(row=4, column=0, columnspan=2, padx=24, pady=(16, 22), sticky="e")
-        ctk.CTkButton(actions, text="Cancel", width=82, command=self.destroy).pack(side="left", padx=(0, 8))
-        self.save_button = ctk.CTkButton(actions, text="Save settings", width=116, command=self._save)
+        ctk.CTkButton(actions, text="Cancel", width=82, height=34, command=self.destroy,
+                      **styles.SECONDARY_BUTTON).pack(side="left", padx=(0, 8))
+        self.save_button = ctk.CTkButton(actions, text="Save settings", width=116, height=34,
+                                        command=self._save, **styles.PRIMARY_BUTTON)
         self.save_button.pack(side="left")
         self.grab_set()
 
@@ -95,38 +101,41 @@ class SettingsDialog(ctk.CTkToplevel):
         except OSError as exc:
             messagebox.showwarning("Settings", f"Could not save your preferences.\n\n{exc}", parent=self)
             return
-        self.app.apply_preferences(preferences)
         self.destroy()
+        self.app.apply_preferences(preferences)
 
 
 class HelpDialog(ctk.CTkToplevel):
     def __init__(self, app):
-        super().__init__(app)
+        super().__init__(app, fg_color=styles.SURFACE)
         self.title("Excel Arranger Help")
         self.transient(app)
         self.resizable(False, False)
         self.bind("<Escape>", lambda _event: self.destroy())
 
-        ctk.CTkLabel(self, text="Excel Arranger Help", font=ctk.CTkFont(size=24, weight="bold")).pack(
+        ctk.CTkLabel(self, text="Excel Arranger Help", text_color=styles.TEXT,
+                     font=ctk.CTkFont(size=24, weight="bold")).pack(
             anchor="w", padx=24, pady=(20, 10)
         )
         for title, instructions in (
-            ("Open your source files", "Use Browse or Ctrl+O to open Excel or CSV files. Choose a worksheet, or use All sheets to combine your sources."),
+            ("Open your source files", "Use Browse files or Ctrl+O to open Excel or CSV files. Choose a worksheet, or use All sheets to combine your sources."),
             ("Choose how to group rows", "Select one or more grouping columns. Use the review tools to check similar spellings or possible duplicate records."),
             ("Review and export", "Select the groups you want. Preview worksheets to check their contents, then generate and save a new workbook."),
         ):
-            ctk.CTkLabel(self, text=title, font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=24)
-            ctk.CTkLabel(self, text=instructions, wraplength=410, justify="left").pack(
+            ctk.CTkLabel(self, text=title, text_color=styles.TEXT,
+                         font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=24)
+            ctk.CTkLabel(self, text=instructions, text_color=styles.MUTED, wraplength=410, justify="left").pack(
                 anchor="w", padx=24, pady=(0, 10)
             )
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.pack(fill="x", padx=24, pady=(8, 22))
         self.github_button = ctk.CTkButton(
-            actions, text="View on GitHub", width=134, command=self._open_project
+            actions, text="View on GitHub", width=134, height=34, command=self._open_project, **styles.PRIMARY_BUTTON
         )
         self.github_button.pack(side="left")
-        ctk.CTkButton(actions, text="Close", width=82, command=self.destroy).pack(side="right")
+        ctk.CTkButton(actions, text="Close", width=82, height=34, command=self.destroy,
+                      **styles.SECONDARY_BUTTON).pack(side="right")
         self.grab_set()
 
     def _open_project(self):
