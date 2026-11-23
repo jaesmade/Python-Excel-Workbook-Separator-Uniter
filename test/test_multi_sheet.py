@@ -85,7 +85,7 @@ class MultiSheetWorkbookTests(unittest.TestCase):
             progress_var=Variable(), progress_bar=Mock(), sheet_var=Variable(),
             sheet_dropdown=Mock(), update_idletasks=Mock(),
             group_column_controls=[(None, Variable(""), Mock(), None)],
-            combine_duplicates_var=Variable(True),
+            combine_duplicates_var=Variable(True), group_search_var=Variable(),
             _clear_group_list=Mock(), _render_groups=Mock(),
         )
         for name in (

@@ -150,7 +150,7 @@ class ExcelSplitterApp(ctk.CTk):
         body.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
-        body.grid_rowconfigure(1, weight=1)
+        body.grid_rowconfigure(2, weight=1)
 
         ctk.CTkLabel(body, text="Detected Groups", text_color=text, font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=(18, 8), pady=(18, 10), sticky="w")
         self.group_sort_var = ctk.StringVar(value="Alphabetical")
@@ -170,12 +170,34 @@ class ExcelSplitterApp(ctk.CTk):
             height=34,
         )
         self.group_sort_dropdown.grid(row=0, column=1, padx=(8, 18), pady=(14, 10), sticky="e")
+        group_tools = ctk.CTkFrame(body, fg_color="transparent")
+        group_tools.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 10), sticky="ew")
+        group_tools.grid_columnconfigure(0, weight=1)
+        self.group_search_var = ctk.StringVar(value="")
+        self.group_search_entry = ctk.CTkEntry(
+            group_tools, textvariable=self.group_search_var, placeholder_text="Search groups",
+            fg_color=ivory_alt, border_color=line, text_color=text, height=34,
+        )
+        self.group_search_entry.grid(row=0, column=0, padx=(0, 8), sticky="ew")
+        self.group_select_all = ctk.CTkButton(
+            group_tools, text="Select all matches", width=140, height=34,
+            command=lambda: self._select_matching_groups(True),
+            fg_color=teal, hover_color=teal_dark, text_color=ivory,
+        )
+        self.group_select_all.grid(row=0, column=1, padx=(0, 8))
+        self.group_deselect_all = ctk.CTkButton(
+            group_tools, text="Deselect all matches", width=150, height=34,
+            command=lambda: self._select_matching_groups(False),
+            fg_color=teal, hover_color=teal_dark, text_color=ivory,
+        )
+        self.group_deselect_all.grid(row=0, column=2)
+
         self.groups_frame = ctk.CTkScrollableFrame(body, corner_radius=12, fg_color=ivory)
-        self.groups_frame.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
+        self.groups_frame.grid(row=2, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
         self.groups_frame.grid_columnconfigure(0, weight=1)
 
         group_pages = ctk.CTkFrame(body, fg_color="transparent")
-        group_pages.grid(row=2, column=0, columnspan=2, padx=18, pady=(0, 16), sticky="w")
+        group_pages.grid(row=3, column=0, columnspan=2, padx=18, pady=(0, 16), sticky="w")
         self.group_previous = ctk.CTkButton(group_pages, text="Previous", width=90, command=lambda: self._change_group_page(-1))
         self.group_previous.pack(side="left")
         self.group_previous.configure(state="disabled")
@@ -456,6 +478,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.headers = []
         self.groups = {}
         self.selected_group_keys = set()
+        self.group_search_var.set("")
         for _frame, variable, dropdown, _remove in self.group_column_controls:
             variable.set("")
             dropdown.configure(values=["Select a column"])
@@ -511,6 +534,23 @@ class ExcelSplitterApp(ctk.CTk):
             "Record count: descending": SORT_COUNT_DESCENDING,
         }[self.group_sort_var.get()]
 
+    def _matching_groups(self):
+        query = self.group_search_var.get().strip().casefold()
+        return [item for item in sort_group_items(self.groups, self._selected_sort_mode())
+                if query in " - ".join(item[0]).casefold()]
+
+    def _on_group_search_changed(self, *_args):
+        self.group_page = 0
+        self._render_groups(self.selected_group_keys)
+
+    def _select_matching_groups(self, selected):
+        matching = {key for key, _rows in self._matching_groups()}
+        if selected:
+            self.selected_group_keys.update(matching)
+        else:
+            self.selected_group_keys.difference_update(matching)
+        self._render_groups(self.selected_group_keys)
+
     def _on_group_sort_changed(self, _value=None):
         self.group_page = 0
         self._render_groups(self.selected_group_keys)
@@ -532,6 +572,7 @@ class ExcelSplitterApp(ctk.CTk):
         self.group_page_var.set("")
         self.group_previous.configure(state="disabled")
         self.group_next.configure(state="disabled")
+        self.group_search_var.trace_add("write", self._on_group_search_changed)
 
     def _render_groups(self, selected_groups=None):
         self._clear_group_list()
@@ -543,13 +584,17 @@ class ExcelSplitterApp(ctk.CTk):
             selected_groups = set(self.groups)
         self.selected_group_keys = set(selected_groups)
 
-        ordered_groups = sort_group_items(self.groups, self._selected_sort_mode())
+        ordered_groups = self._matching_groups()
         page_size = 50
         page_count = max(1, (len(ordered_groups) + page_size - 1) // page_size)
         self.group_page = max(0, min(self.group_page, page_count - 1))
-        self.group_page_var.set(f"Page {self.group_page + 1} of {page_count}  ·  {len(self.groups):,} groups")
+        self.group_page_var.set(f"Page {self.group_page + 1} of {page_count}  ·  {len(ordered_groups):,} matching groups")
         self.group_previous.configure(state="normal" if self.group_page else "disabled")
         self.group_next.configure(state="normal" if self.group_page + 1 < page_count else "disabled")
+
+        if not ordered_groups:
+            ctk.CTkLabel(self.groups_frame, text="No matching groups.", anchor="w", text_color="black").grid(sticky="ew", padx=16, pady=8)
+            return
 
         teal = "#12454B"
         teal_dark = "#0C3035"
@@ -575,6 +620,7 @@ class ExcelSplitterApp(ctk.CTk):
         self._clear_group_list()
         self.groups = {}
         self.selected_group_keys = set()
+        self.group_search_var.set("")
         if not self.headers:
             return False
 
