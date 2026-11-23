@@ -14,7 +14,7 @@ from openpyxl import Workbook
 
 from .formula_check import formula_cell
 from .utils import SheetNameRegistry, detect_header_names, normalize_group_value, sanitize_sheet_name
-from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_worksheet, legacy_styles
+from .formatting import CENTERED_COLUMNS, format_legacy_dimensions, format_worksheet, legacy_cell_style, legacy_styles
 
 
 class WorkbookProcessingError(ValueError):
@@ -26,6 +26,15 @@ class _ExcelError(str):
 
 
 _LEGACY_ERROR_CODES = {text: code for code, text in xlrd.error_text_from_code.items()}
+
+
+class _FormattedRow(tuple):
+    """A row of ordinary values with their source number formats attached."""
+
+    def __new__(cls, values, number_formats):
+        row = super().__new__(cls, values)
+        row.number_formats = number_formats
+        return row
 
 
 def _parse_excel_sheet(workbook, sheet_name):
@@ -46,6 +55,19 @@ def _parse_excel_sheet(workbook, sheet_name):
                   if cell.data_type == "e")
     for row, col, value in errors:
         raw.iat[row, col] = _ExcelError(value)
+    if workbook.engine == "xlrd":
+        book = workbook.book
+        formats = [
+            [book.format_map[book.xf_list[sheet.cell_xf_index(row, col)].format_key].format_str
+             if row < sheet.nrows and col < sheet.ncols else None
+             for col in range(raw.shape[1])]
+            for row in range(raw.shape[0])
+        ]
+    else:
+        formats = [[getattr(cell, "number_format", None) for cell in row]
+                   for row in sheet.iter_rows(min_row=1, max_row=raw.shape[0],
+                                              min_col=1, max_col=raw.shape[1])]
+    raw.attrs["number_formats"] = formats
     return raw
 
 
@@ -101,7 +123,9 @@ def _read_input_file(file_path: str, sheet_name: str | None = None) -> pd.DataFr
     if extension == ".csv":
         raw = pd.read_csv(file_path, header=None, dtype=str, keep_default_na=False)
         return _table_from_raw(raw, os.path.basename(file_path))
-    with pd.ExcelFile(file_path, engine=_select_excel_engine(file_path)) as workbook:
+    engine = _select_excel_engine(file_path)
+    with pd.ExcelFile(file_path, engine=engine,
+                      engine_kwargs={"formatting_info": True} if engine == "xlrd" else {}) as workbook:
         name = workbook.sheet_names[0] if sheet_name is None else sheet_name
         _ensure_no_formulas(file_path, name)
         raw = _parse_excel_sheet(workbook, name)
@@ -121,7 +145,10 @@ def _table_from_raw(raw: pd.DataFrame, source_label: str) -> pd.DataFrame:
         raise WorkbookProcessingError(f"Duplicate column headers found in '{source_label}'.")
     table = raw.iloc[1:].copy()
     table.columns = headers
-    return table.reset_index(drop=True)
+    table = table.reset_index(drop=True)
+    if "number_formats" in raw.attrs:
+        table.attrs["number_formats"] = raw.attrs["number_formats"][1:]
+    return table
 
 
 def _iter_input_tables(file_path: str, sheet_name: str | None):
@@ -130,7 +157,8 @@ def _iter_input_tables(file_path: str, sheet_name: str | None):
         return
 
     engine = _select_excel_engine(file_path)
-    with pd.ExcelFile(file_path, engine=engine) as workbook:
+    with pd.ExcelFile(file_path, engine=engine,
+                      engine_kwargs={"formatting_info": True} if engine == "xlrd" else {}) as workbook:
         selected_sheets = workbook.sheet_names if sheet_name == ALL_SHEETS else [
             workbook.sheet_names[0] if sheet_name is None else sheet_name
         ]
@@ -192,10 +220,16 @@ def _normalize_input_tables(input_tables):
     if not tables:
         return [], headers
 
-    aligned_tables = [
-        (source_name, table.reindex(columns=headers))
-        for source_name, table in tables
-    ]
+    aligned_tables = []
+    for source_name, table in tables:
+        aligned = table.reindex(columns=headers)
+        if "number_formats" in table.attrs:
+            positions = {header: index for index, header in enumerate(table.columns)}
+            aligned.attrs["number_formats"] = [
+                [formats[positions[header]] if header in positions else None for header in headers]
+                for formats in table.attrs["number_formats"]
+            ]
+        aligned_tables.append((source_name, aligned))
     return aligned_tables, headers
 
 
@@ -207,8 +241,9 @@ def _ensure_python_value(value):
 
 def _iter_sheet_rows(sheet):
     if isinstance(sheet, pd.DataFrame):
-        for row in sheet.itertuples(index=False, name=None):
-            yield row
+        formats = sheet.attrs.get("number_formats")
+        for index, row in enumerate(sheet.itertuples(index=False, name=None)):
+            yield _FormattedRow(row, formats[index]) if formats is not None else row
         return
 
     for row in sheet.iter_rows(values_only=True):
@@ -407,9 +442,13 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                 sheet.row(row_num).height = 23 * 20
                 sheet.row(row_num).height_mismatch = True
                 for col_num, value in enumerate(row_values):
-                    style = styles[(row_num % 2 == 0,
-                                    combined_headers[col_num].casefold() in CENTERED_COLUMNS,
-                                    isinstance(value, date))]
+                    formats = getattr(row_values, "number_formats", None)
+                    number_format = formats[col_num] if formats is not None else None
+                    style = legacy_cell_style(
+                        styles, row_num % 2 == 0,
+                        combined_headers[col_num].casefold() in CENTERED_COLUMNS,
+                        number_format or ("YYYY-MM-DD HH:MM:SS" if isinstance(value, date) else "General"),
+                    )
                     if isinstance(value, _ExcelError) and value in _LEGACY_ERROR_CODES:
                         sheet.row(row_num).set_cell_error(col_num, _LEGACY_ERROR_CODES[value], style)
                     elif isinstance(value, _ExcelError):
@@ -450,6 +489,9 @@ def split_input_tables(input_tables, department_column: str, id_number_column: s
                     target_sheet.cell(row=row_num, column=col_num, value=None)
                 else:
                     cell = target_sheet.cell(row=row_num, column=col_num, value=value)
+                    formats = getattr(row_values, "number_formats", None)
+                    if formats is not None and formats[col_num - 1]:
+                        cell.number_format = formats[col_num - 1]
                     if isinstance(value, _ExcelError):
                         cell.data_type = "e"
                     elif isinstance(value, str):

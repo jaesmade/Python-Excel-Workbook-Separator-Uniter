@@ -1,7 +1,5 @@
 """Export styling based on the FULL DATAS attendance workbooks."""
 
-from datetime import date, datetime
-
 import xlwt
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -54,10 +52,6 @@ def format_worksheet(sheet, table_index: int):
         for cell in column[1:]:
             cell.font = body_font
             cell.alignment = alignment
-            if isinstance(cell.value, datetime):
-                cell.number_format = "yyyy-mm-dd hh:mm:ss"
-            elif isinstance(cell.value, date):
-                cell.number_format = "yyyy-mm-dd"
     for row_index in range(2, sheet.max_row + 1):
         sheet.row_dimensions[row_index].height = 23
     table = Table(displayName=f"Attendance_{table_index}", ref=sheet.dimensions)
@@ -66,6 +60,19 @@ def format_worksheet(sheet, table_index: int):
         showRowStripes=True, showColumnStripes=False,
     )
     sheet.add_table(table)
+
+
+def legacy_cell_style(styles, striped, centered, number_format):
+    """Reuse an output style for each combination of appearance and format."""
+    key = (striped, centered, number_format)
+    if key not in styles:
+        styles[key] = xlwt.easyxf(
+            "font: name Arial, height 220;"
+            f"alignment: horiz {'center' if centered else 'left'}, vert centre;"
+            + ("pattern: pattern solid, fore_colour 34;" if striped else ""),
+            num_format_str=number_format,
+        )
+    return styles[key]
 
 
 def legacy_styles(workbook):
@@ -80,15 +87,6 @@ def legacy_styles(workbook):
             "borders: bottom medium, bottom_colour 33;"
         )
     }
-    for striped in (False, True):
-        for centered in (False, True):
-            for is_date in (False, True):
-                styles[striped, centered, is_date] = xlwt.easyxf(
-                    "font: name Arial, height 220;"
-                    f"alignment: horiz {'center' if centered else 'left'}, vert centre;"
-                    + ("pattern: pattern solid, fore_colour 34;" if striped else ""),
-                    num_format_str="YYYY-MM-DD HH:MM:SS" if is_date else "General",
-                )
     return styles
 
 
