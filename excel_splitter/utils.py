@@ -6,7 +6,8 @@ from typing import Iterable
 
 INVALID_SHEET_CHARS = set(':/?*[]\\')
 RESERVED_SHEET_NAMES = frozenset({"history"})
-SHEET_NAME_EDGES = re.compile(r"^[\s']+|[\s']+$")
+SHEET_NAME_START = re.compile(r"^[\s']+")
+SHEET_NAME_END = re.compile(r"[\s']+$")
 
 
 class SheetNameRegistry:
@@ -50,9 +51,9 @@ def normalize_group_value(value, default_label: str) -> str:
 
 def sanitize_sheet_name(name: str, used_names: set[str] | SheetNameRegistry) -> str:
     cleaned = "".join("-" if char in INVALID_SHEET_CHARS else char for char in str(name or "GROUP"))
-    cleaned = SHEET_NAME_EDGES.sub("", cleaned.strip().strip("."))
+    cleaned = SHEET_NAME_START.sub("", cleaned.strip().strip("."))
     # Truncation can leave an internal apostrophe at the end of the title.
-    candidate = SHEET_NAME_EDGES.sub("", cleaned[:31]) or "GROUP"
+    candidate = SHEET_NAME_END.sub("", cleaned[:31]) or "GROUP"
     if isinstance(used_names, SheetNameRegistry):
         return used_names.allocate(candidate)
     unavailable_names = RESERVED_SHEET_NAMES | {name.casefold() for name in used_names}
